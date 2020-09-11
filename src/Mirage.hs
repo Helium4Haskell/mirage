@@ -2,8 +2,7 @@
 
 module Mirage where
 
-import           Data.Foldable                  ( for_
-                                                , traverse_
+import           Data.Foldable                  ( traverse_
                                                 , fold
                                                 )
 import           Data.Traversable               ( for )
@@ -17,6 +16,7 @@ import           Data.Maybe
 import           Mirage.Shape
 import           Mirage.Cairo
 
+nodeNameOptions, attrNameOptions :: FontOptions
 nodeNameOptions = FontOptions 13 "sans" FontWeightBold
 attrNameOptions = FontOptions 13 "sans" FontWeightNormal
 
@@ -133,7 +133,7 @@ nodeShape role (Node name inhs syns) fontExtents textExtents =
               * fromIntegral n
               + fontExtentsVerticalSpacing nodeNameFontExtents
       in  fold
-            [ trapezoidShape w wspc nodeNameHeight attrNamesHeight n
+            [ trapezoidShape w nodeNameHeight attrNamesHeight
             , if role == NodeRoleChild
               then ShapeResult
                 (Map.singleton (Address name Nothing)
@@ -148,20 +148,14 @@ nodeShape role (Node name inhs syns) fontExtents textExtents =
                 ]
               else mempty
             , fold $ map
-              (\(an, as) -> diskShapes role
-                                       w
-                                       wspc
-                                       attrNameFontExtents
-                                       nodeNameHeight
-                                       an
-                                       n
-                                       as
+              (\(an, as) ->
+                diskShapes w attrNameFontExtents nodeNameHeight an n as
               )
               [(inhs, AttrLocLeft), (syns, AttrLocRight)]
-            , nodeNameShape name nodeNameFontExtents nodeNameExtents
+            , nodeNameShape nodeNameFontExtents
             , fold $ zipWith
               (\as al ->
-                attrNameShapes w wspc attrNameFontExtents nodeNameHeight as n al
+                attrNameShapes w attrNameFontExtents nodeNameHeight as n al
               )
               (zipWith zip [inhs, syns] [inhExtents, synExtents])
               [AttrLocLeft, AttrLocRight]
@@ -185,7 +179,7 @@ nodeShape role (Node name inhs syns) fontExtents textExtents =
         , (i, TextExtents attrWidth) <- zip [0 ..] attrExtents
         ]
 
-  trapezoidShape w wspc nnh anh n = ShapeResult
+  trapezoidShape w nnh anh = ShapeResult
     mempty
     mempty
     [ PolyLine
@@ -202,16 +196,14 @@ nodeShape role (Node name inhs syns) fontExtents textExtents =
 
   -- TODO: merge with attrNameShapes
   diskShapes
-    :: NodeRole
-    -> Double
-    -> Double
+    :: Double
     -> FontExtents
     -> Double
     -> [Text]
     -> Int
     -> AttrLoc
     -> ShapeResult
-  diskShapes role w wspc attrNameExtents nodeNameHeight attrs n attrLoc = fold
+  diskShapes w attrNameExtents nodeNameHeight attrs n attrLoc = fold
     [ let point =
             ( -al * (wspc + w + (i * hgt) + (vspc + (asc + dsc) / 2 + 1))
             , (fromIntegral n * hgt + vspc)
@@ -231,52 +223,49 @@ nodeShape role (Node name inhs syns) fontExtents textExtents =
     | (i, attrName) <- zip [0 ..] attrs
     ]
    where
-    al    = if attrLoc == AttrLocLeft then 1 else -1
-    vspc  = fontExtentsVerticalSpacing attrNameExtents
-    hgt   = fontExtentsHeight attrNameExtents
-    asc   = fontExtentsAscent attrNameExtents
-    dsc   = fontExtentsDescent attrNameExtents
-    attrN = length attrs
+    al   = if attrLoc == AttrLocLeft then 1 else -1
+    vspc = fontExtentsVerticalSpacing attrNameExtents
+    hgt  = fontExtentsHeight attrNameExtents
+    asc  = fontExtentsAscent attrNameExtents
+    dsc  = fontExtentsDescent attrNameExtents
 
-  nodeNameShape name (FontExtents spc _ _) (TextExtents nnw) = ShapeResult
+  nodeNameShape (FontExtents spc _ _) = ShapeResult
     mempty
     mempty
     [Text (0, spc) HorizontalAlignCenter VerticalAlignTop nodeNameOptions name]
 
   attrNameShapes
     :: Double
-    -> Double
     -> FontExtents
     -> Double
     -> [(Text, TextExtents)]
     -> Int
     -> AttrLoc
     -> ShapeResult
-  attrNameShapes w wspc attrNameExtents nodeNameHeight attr n attrLoc =
-    ShapeResult
-      mempty
-      mempty
-      [ Text
-          ( -al
-            * (wspc + w + (i * hgt) - if attrLoc == AttrLocRight
-                then attrWidth
-                else 0
-              )
-          , (fromIntegral n * hgt + vspc)
-          + nodeNameHeight
-          - (i * hgt)
-          - (vspc + 1)
-          )
-          HorizontalAlignLeft
-          VerticalAlignBottom
-          attrNameOptions
-          attrName
-      | (i, (attrName, TextExtents attrWidth)) <- zip [0 ..] attr
-      ]
+  attrNameShapes w attrNameExtents nodeNameHeight attr n attrLoc = ShapeResult
+    mempty
+    mempty
+    [ Text
+        ( -al
+          * (wspc + w + (i * hgt) - if attrLoc == AttrLocRight
+              then attrWidth
+              else 0
+            )
+        , (fromIntegral n * hgt + vspc)
+        + nodeNameHeight
+        - (i * hgt)
+        - (vspc + 1)
+        )
+        HorizontalAlignLeft
+        VerticalAlignBottom
+        attrNameOptions
+        attrName
+    | (i, (attrName, TextExtents attrWidth)) <- zip [0 ..] attr
+    ]
    where
-    al                       = if attrLoc == AttrLocLeft then 1 else -1
-    FontExtents vspc dsc asc = attrNameExtents
-    hgt                      = fontExtentsHeight attrNameExtents
+    al                   = if attrLoc == AttrLocLeft then 1 else -1
+    FontExtents vspc _ _ = attrNameExtents
+    hgt                  = fontExtentsHeight attrNameExtents
 
   wspc = 13
 
@@ -364,9 +353,11 @@ renderRule (Rule x xs ls cs) = do
           (Just (x, y), Just (x', y')) -> do
             Just
               (Bezier
-                (x , y)
-                (x , if fromNode == "lhs" then y + 200 else y - 200)
-                (x', if toNode `elem` ["lhs", "loc"] then y' + 200 else y' - 200)
+                (x, y)
+                (x, if fromNode == "lhs" then y + 200 else y - 200)
+                ( x'
+                , if toNode `elem` ["lhs", "loc"] then y' + 200 else y' - 200
+                )
                 (x', y')
               )
           _ -> Nothing
