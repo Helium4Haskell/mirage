@@ -12,6 +12,12 @@ import           Data.Foldable                  ( traverse_ )
 
 renderShape :: Shape -> Render ()
 renderShape (PolyLine x xs) = do
+  save
+  uncurry moveTo x
+  traverse_ (uncurry relLineTo) xs
+  setSourceRGB 1 1 1
+  fill
+  restore
   uncurry moveTo x
   traverse_ (uncurry relLineTo) xs
   stroke

@@ -1,6 +1,8 @@
+Short term:
+
   * [x] 0. Make git & github repositories; fix project structure & split modules; use GtkDrawArea
   * [x] 1. Add port/circle for each child node and appropriate spacing.
-  * [ ] 2. Add local variables with one port on top and one port at the bottom.
+  * [x] 2. Add local variables with one port on top and one port at the bottom.
   * [ ] 3. Parse a-terms and extract dependencies (consider using UUAGC)
   * [ ] 4. Hover over attributes to see implementation
   * [ ] 5. Drag background to pan
