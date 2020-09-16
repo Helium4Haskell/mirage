@@ -1,0 +1,14 @@
+packages:
+    ./*.cabal
+
+source-repository-package
+    type: git
+    location: https://github.com/UU-ComputerScience/uuagc.git
+    tag: 8cc53af8c0bb3fddc12c901574f8e6befbc7cf56
+    subdir: uuagc/trunk
+
+source-repository-package
+    type: git
+    location: https://github.com/UU-ComputerScience/uuagc.git
+    tag: 8cc53af8c0bb3fddc12c901574f8e6befbc7cf56
+    subdir: uuagc/trunk/cabal-plugin

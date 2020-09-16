@@ -143,9 +143,6 @@ sizeAllocate area rectangle = do
 
 draw :: Gtk.DrawingArea -> Cairo.Context -> IO Bool
 draw area ctx = do
-  print =<< #getEvents area
-
-
   r               <- #getAllocation area
   x               <- fromIntegral <$> get r #x
   y               <- fromIntegral <$> get r #y
@@ -160,7 +157,7 @@ draw area ctx = do
     =<< #getColor refStyleContext
     =<< #getState refStyleContext
 
-  renderWithContext ctx (renderRule isOrderedExample)
+  renderWithContext ctx (renderRule (width, height) isOrderedExample)
 
   return True
 

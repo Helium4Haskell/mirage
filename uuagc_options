@@ -1,0 +1,2 @@
+file: "src/Mirage/AG.ag"
+options: haskellsyntax, module "Mirage.AG", catas, semfuns, signatures, wrappers, data, genvisage

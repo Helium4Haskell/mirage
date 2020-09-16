@@ -1,7 +1,12 @@
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Mirage.Cairo where
 
-import           Graphics.Rendering.Cairo hiding (x, y)
+import           Graphics.Rendering.Cairo
+                                         hiding ( x
+                                                , y
+                                                )
 import qualified Mirage.Shape                  as Mirage
 import           Mirage.Shape                   ( Shape(..)
                                                 , verticalAlignOffset
