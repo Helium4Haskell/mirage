@@ -1,0 +1,67 @@
+optpragmas
+{
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveGeneric #-}
+}
+
+imports {
+import           Data.Text                      ( Text )
+-- import qualified Data.Text                     as Text
+
+import           Mirage.Shape
+import           Mirage.CommonTypes
+
+-- import           Data.Aeson
+import           GHC.Generics
+}
+
+type Nonterminals = [Nonterminal]
+type Attributes   = [Attribute]
+type Productions  = [Production]
+type Children     = [Child]
+type Rules        = [Rule]
+
+data Grammar
+  | Grammar      nonts       :: Nonterminals
+
+data Nonterminal
+  | Nonterminal  name        :: Text
+                 params      :: {[Text]}
+                 inhs        :: {Attributes}
+                 syns        :: {Attributes}
+                 prods       :: Productions
+
+data Attribute
+  | Attribute    name        :: Text
+                 tp          :: Type
+
+data Production
+  | Production   name        :: Text
+                 children    :: Children
+                 rules       :: Rules
+
+data Child
+  | Child        name        :: Text
+                 tp          :: Type
+
+data Rule
+  | Rule         targets     :: {[Address]}
+                 sources     :: {[Address]}
+                 explicit    :: Bool
+                 definition  :: Text
+
+deriving Grammar Nonterminal Attribute Production Child Rule : Generic, Show
+
+data Node
+  | Node name :: Text
+         inhs :: Attributes
+         syns :: Attributes 
+
+data Connection
+  | Connection source :: Address
+               target :: Address
+
+deriving Connection : Eq, Ord
+
+type Locals       = [Text]
+type Connections  = [Connection]

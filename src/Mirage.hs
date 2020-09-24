@@ -1,33 +1,45 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Mirage where
+module Mirage
+  ( Grammar
+  , renderGrammar
+  , nontsAndProds
+  )
+where
 
-import           Data.Foldable                  ( traverse_
-                                                , fold
-                                                )
-import           Data.Traversable               ( for )
-
-import qualified Data.Map                      as Map
-import           Data.Map                       ( Map )
+import           Data.Foldable                  ( traverse_ )
 import           Graphics.Rendering.Cairo       ( Render )
 import           Data.Text                      ( Text )
-import           Data.Maybe                     ( mapMaybe )
 
 import           Mirage.Shape
 import           Mirage.Cairo
-import           Mirage.AG
+import           Mirage.AbstractSyntax
+import           Mirage.NontsAndProds
+import           Mirage.RenderShapes
+import           Mirage.CommonTypes             ( )
+import           Mirage.Instances               ( )
 
-binRule :: Rule
-binRule = Rule
-  (Node "lhs" ["i"] ["val"])
-  [Node "lt" ["i"] ["val"], Node "rt" ["i"] ["val"]]
-  []
-  [ Connection (Address "lhs" (Just "i"))  (Address "lt" (Just "i"))
-  , Connection (Address "lt" (Just "val")) (Address "lhs" (Just "val"))
+{-
+binExample :: Grammar
+binExample = Grammar
+  [ Nonterminal
+      "Bin"
+      ["a"]
+      [Attribute "i" (Haskell "Int")]
+      [Attribute "val" (Haskell "@a")]
+      [ Production
+        "Bin"
+        [ Child "l" (NT "Bin" [])
+        , Child "x" (Haskell "@a")
+        , Child "r" (NT "Bin" [])
+        ]
+        []
+      , Production "Leaf" [] []
+      ]
   ]
 
-isOrderedExample :: Rule
-isOrderedExample = Rule
+isOrderedExample :: Production
+isOrderedExample = Production
   (Node "lhs" ["lb", "ub"] ["isOrdered"])
   [ Node "l" ["lb", "ub"] ["isOrdered"]
   , Node "x" []           []
@@ -48,9 +60,10 @@ isOrderedExample = Rule
   , Connection (Address "loc" (Just "isOrdered"))
                (Address "lhs" (Just "isOrdered"))
   ]
+-}
 
-renderRule :: (Double, Double) -> Rule -> Render ()
-renderRule bb rule = do
+renderGrammar :: (Double, Double) -> Grammar -> Text -> Text -> Render ()
+renderGrammar bb gram nont prod = do
   let nodeFont = FontOptions 13 "sans" FontWeightBold
   nodeFontExtents <- mirageFontExtents nodeFont
   let attrFont = FontOptions 13 "sans" FontWeightNormal
@@ -58,6 +71,14 @@ renderRule bb rule = do
 
   cairo           <- askCairo
 
-  traverse_
-    renderShape
-    (ruleShapes cairo nodeFont nodeFontExtents attrFont attrFontExtents bb rule)
+  let shapes = grammarShapes cairo
+                             nodeFont
+                             nodeFontExtents
+                             attrFont
+                             attrFontExtents
+                             bb
+                             nont
+                             prod
+                             gram
+
+  traverse_ renderShape shapes

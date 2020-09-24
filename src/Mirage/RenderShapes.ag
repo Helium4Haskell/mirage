@@ -1,0 +1,378 @@
+include "AbstractSyntax.ag"
+
+optpragmas
+{
+{-# LANGUAGE OverloadedStrings #-}
+-- {-# LANGUAGE DeriveGeneric #-}
+}
+
+imports {
+import           Data.Text                      ( Text )
+-- import qualified Data.Text                     as Text
+import           Data.Map                       ( Map )
+import qualified Data.Map                      as Map
+import           Data.Set                       ( Set )
+import qualified Data.Set                      as Set
+import           Graphics.Rendering.Cairo.Internal
+                                                ( Render(..), Cairo )
+
+import           Mirage.Shape
+import           Mirage.Cairo
+import           Mirage.AbstractSyntax
+import           Mirage.CommonTypes
+import           Mirage.Instances
+
+import           System.IO.Unsafe               ( unsafePerformIO )
+import           Control.Monad.Trans.Reader
+
+-- import           Data.Aeson
+-- import           GHC.Generics
+}
+
+attr Production Productions
+  inh parentAttrs :: {(Attributes, Attributes)}
+
+sem Nonterminal
+  | Nonterminal prods.parentAttrs = (@inhs, @syns)
+
+sem Production
+  | Production inst.parent :: Node
+               inst.parent = uncurry (Node "lhs") @lhs.parentAttrs
+
+               inst.locals :: Locals
+               inst.locals = Set.toList (@rules.gathLocals)
+
+               inst.connections :: Connections
+               inst.connections = Set.toList (@rules.gathConnections)
+
+attr Nonterminal Nonterminals
+  syn nontMapSyn use {<>} {mempty} :: {Map Text (Attributes, Attributes)}
+
+sem Nonterminal
+  | Nonterminal lhs.nontMapSyn = Map.singleton @name (@inhs, @syns)
+
+sem Grammar
+  | Grammar nonts.nontMapInh = @nonts.nontMapSyn
+
+attr Child Children Production Productions Nonterminal Nonterminals
+  inh nontMapInh :: {Map Text (Attributes, Attributes)}
+
+sem Child
+  | Child inst.node :: Node
+          inst.node = uncurry (Node @name) $ case @tp of
+                        NT tp _ -> @lhs.nontMapInh Map.! tp
+                        _ -> ([], [])
+
+attr Rules Rule
+  syn gathLocals      use {<>} {mempty} :: {Set Text}
+  syn gathConnections use {<>} {mempty} :: {Set Connection}
+
+sem Rule
+  | Rule lhs.gathLocals = Set.fromList [y | Address x y <- @targets ++ @sources, x == "loc"]
+         lhs.gathConnections = Set.fromList [Connection x y | x <- @sources, y <- @targets]
+          
+{
+data AttrLoc = AttrLocLeft | AttrLocRight deriving Eq
+
+data NodeRole = NodeRoleParent | NodeRoleChild deriving Eq
+
+askCairo :: Render Cairo
+askCairo = Render ask
+
+-- This function is mostly safe, the value can change slightly due to hinting if
+-- the transformation matrix is changed. We do not change the transformation
+-- matrix, so for our use this function should be completely safe.
+--
+-- To quote from the online cairo documentation:
+--
+--   Because text extents are in user-space coordinates, they are mostly, but
+--   not entirely, independent of the current transformation matrix.
+--   [..]
+--   They will change slightly due to hinting (so you can't assume that metrics
+--   are independent of the transformation matrix), but otherwise will remain
+--   unchanged.
+textExtents :: Cairo -> FontOptions -> Text -> TextExtents
+textExtents cairo font txt = unsafePerformIO $
+  runReaderT (runRender (mirageTextExtents font txt)) cairo
+}
+
+attr Child Children Locals Attribute Attributes Production Productions Node Nonterminal Nonterminals Grammar
+  inh nodeFont :: FontOptions
+  inh nodeFontExtents :: FontExtents
+
+  inh attrFont :: FontOptions
+  inh attrFontExtents :: FontExtents
+  
+  inh cairo :: {Cairo}
+
+attr Grammar Nonterminals Nonterminal Productions Production Connections Connection
+  inh bb :: {(Double, Double)}
+
+attr Child Children Locals Attribute Attributes Node
+  -- bounding box size
+  syn bb :: {(Double, Double)}
+  
+  -- position (bottom left corner of bounding box)
+  inh pos :: {(Double, Double)}
+
+  -- used for drawing the lines between the nodes
+  syn sources use {<>} {mempty} :: {Map Address (Double, Double)}
+  syn targets use {<>} {mempty} :: {Map Address (Double, Double)}
+
+attr Grammar Nonterminals Nonterminal Productions Production Child Children Locals Connections Connection Attribute Attributes Node
+  syn shapes use {<>} {mempty} :: {[Shape]}
+
+attr Grammar Nonterminals Nonterminal 
+  inh chosenNont :: Text
+
+attr Grammar Nonterminals Nonterminal Productions Production
+  inh chosenProd :: Text
+
+attr Attribute Attributes
+  inh location :: AttrLoc
+  inh fieldName :: Text
+  -- syn n use {+} {0} :: Int
+
+attr Attribute Attributes Node Child Children
+  inh role :: {NodeRole}
+
+sem Nonterminal
+  | Nonterminal lhs.shapes = if @name == @lhs.chosenNont then @prods.shapes else []
+
+sem Production
+  | Production lhs.shapes = if @name == @lhs.chosenProd then @loc.shapes else []
+
+attr Connections Connection
+  inh sources :: {Map Address (Double, Double)}
+  inh targets :: {Map Address (Double, Double)}
+
+sem Attributes
+  | Nil lhs.bb = (0, 0)
+  | Cons
+     -- +n = (+ 1)
+      lhs.bb = (@loc.w, @loc.h)
+      loc.(w, h) = ( max (fst @tl.bb) (fst @hd.bb + snd @tl.bb)
+                   , snd @tl.bb + snd @hd.bb
+                   )
+      tl.pos = ( fst @lhs.pos + if @lhs.location == AttrLocRight
+                                  then @loc.w - fst @tl.bb
+                                  else 0
+               , snd @lhs.pos - if @lhs.role == NodeRoleParent
+                                  then snd @hd.bb
+                                  else 0
+               )
+      hd.pos = ( fst @lhs.pos + if @lhs.location == AttrLocRight
+                                  then @loc.w - snd @tl.bb - fst @hd.bb
+                                  else snd @tl.bb
+               , snd @lhs.pos - if @lhs.role == NodeRoleChild
+                                  then snd @tl.bb
+                                  else 0
+               )
+
+sem Attribute
+  | Attribute
+      lhs.bb = (@loc.w + 1.5 * @loc.h, @loc.h)
+      loc.h = fontExtentsHeight @lhs.attrFontExtents
+      (TextExtents loc.w) = textExtents @lhs.cairo @lhs.attrFont @name
+      loc.isSource = (@lhs.location == AttrLocLeft)
+                       == (@lhs.role == NodeRoleParent)
+      loc.addPort = Map.insert (Address @lhs.fieldName @name) (@loc.x, @loc.y)
+     +sources = if @loc.isSource then @loc.addPort else id
+     +targets = if @loc.isSource then id else @loc.addPort
+      loc.x = fst @lhs.pos + if @lhs.location == AttrLocLeft
+                               then 0.5 * @loc.h
+                               else @loc.w + @loc.h 
+      loc.y = snd @lhs.pos - @loc.h / 2
+     +shapes
+       = ([ Disk (if @loc.isSource then (1, 2 / 5, 0) else (0, 2 / 3, 3 / 4))
+                 (@loc.x, @loc.y) 
+                 (0.45 * @loc.h)
+          , Text ( @loc.x + if @lhs.location == AttrLocLeft
+                              then @loc.h / 2
+                              else - @loc.h / 2
+                 , @loc.y
+                 )
+                 (if @lhs.location == AttrLocLeft
+                    then HorizontalAlignLeft
+                    else HorizontalAlignRight)
+                 VerticalAlignCenter
+                 @lhs.attrFont
+                 @name
+          ] <>)
+
+sem Node
+  | Node 
+      loc.ahgt = fontExtentsHeight @lhs.attrFontExtents
+      loc.nhgt = fontExtentsHeight @lhs.nodeFontExtents
+      (TextExtents loc.w) = textExtents @lhs.cairo @lhs.nodeFont @name
+      lhs.bb = (@loc.bb_w, @loc.bb_h)
+      (loc.bb_w, loc.bb_h)
+        = let (xi, yi) = @inhs.bb
+              (xs, ys) = @syns.bb
+          in ( max @loc.w (abs (yi - ys) + max @loc.ahgt (xi + xs) + @loc.ahgt)
+             , @loc.nhgt + max yi ys + if @loc.hasSource then @loc.ahgt else 0
+             )
+      loc.hasSource = @lhs.role == NodeRoleChild
+      inhs.pos
+        = let (x, y) = @lhs.pos
+          in ( x + max 0 (snd @syns.bb - snd @inhs.bb)
+             , y - if @lhs.role == NodeRoleParent
+                     then 0
+                     else @loc.nhgt + max 0 (snd @syns.bb - snd @inhs.bb)
+             )
+      syns.pos
+        = let (x, y) = @lhs.pos
+          in ( x + @loc.bb_w - fst @syns.bb - max 0 (snd @inhs.bb - snd @syns.bb)
+             , y - if @lhs.role == NodeRoleParent
+                 then 0
+                 else @loc.nhgt + max 0 (snd @inhs.bb - snd @syns.bb)
+             )
+      loc.fieldName = @name
+      (inhs.location, syns.location) = (AttrLocLeft, AttrLocRight)
+      loc.portPos = (fst @lhs.pos + @loc.bb_w / 2, snd @lhs.pos - @loc.bb_h + @loc.ahgt / 2)
+      +sources = if @loc.hasSource then Map.insert (Address "loc" @name) @loc.portPos else id
+      +shapes
+        = let (x, y) = @lhs.pos
+          in (([ PolyLine
+                 (x, y - if @lhs.role == NodeRoleParent then @loc.bb_h else 0)
+                 (let anh = max (snd @inhs.bb) (snd @syns.bb)
+                          + if @loc.hasSource then @loc.ahgt / 2 else 0
+                      nnh = @loc.nhgt
+                      c = if @lhs.role == NodeRoleParent then 1 else -1
+                  in [ (0                  , c * nnh)
+                     , (anh                , c * anh)
+                     , (@loc.bb_w - 2 * anh, 0)
+                     , (anh                , -c * anh)
+                     , (0                  , -c * nnh)
+                     , (- @loc.bb_w        , 0)
+                     ]
+                 )
+               , Text
+                 ( x + @loc.bb_w / 2
+                 , y - if @lhs.role == NodeRoleParent
+                         then @loc.bb_h - @loc.nhgt
+                         else 0
+                 )
+                 HorizontalAlignCenter
+                 VerticalAlignBottom
+                 @lhs.nodeFont
+                 @name
+               ]
+               ++ if @loc.hasSource
+                    then [Disk (1, 2 / 5, 0) @loc.portPos (0.45 * @loc.ahgt)]
+                    else []
+              ) <>)
+
+sem Children
+  | Nil lhs.bb = (0, 0)
+  | Cons
+      hd.pos = @lhs.pos
+      tl.pos = let (x, y) = @lhs.pos in (x + 20 + fst @hd.bb, y)
+      lhs.bb = let (x , y ) = @hd.bb 
+                   (xs, ys) = @tl.bb
+               in (x + 20 + xs, max y ys)
+
+sem Locals
+  | Nil lhs.bb = (0, 0)
+  | Cons
+      loc.nhgt = fontExtentsHeight @lhs.nodeFontExtents
+      loc.ahgt = fontExtentsHeight @lhs.attrFontExtents
+      (TextExtents loc.w) = textExtents @lhs.cairo @lhs.nodeFont @hd
+      loc.bb_w = @loc.w + @loc.ahgt
+      loc.bb_h = 2 * @loc.ahgt + @loc.nhgt
+      tl.pos = let (x, y) = @lhs.pos in (x + @loc.bb_w + 20, y)
+      loc.sourcePos = let (x, y) = @lhs.pos in (x + @loc.bb_w / 2, y - @loc.bb_h + @loc.ahgt)
+      loc.targetPos = let (x, y) = @lhs.pos in (x + @loc.bb_w / 2, y)
+      loc.insertLoc = Map.insert (Address "loc" @hd)
+      +sources = @loc.insertLoc @loc.sourcePos
+      +targets = @loc.insertLoc @loc.targetPos
+      +shapes
+        = let (x, y) = @lhs.pos
+          in ([ PolyLine (x + @loc.ahgt / 2,y)
+                         [ (@loc.w         , 0)
+                         , (@loc.ahgt / 2  , - @loc.ahgt / 2)
+                         , (0              , - @loc.nhgt)
+                         , (- @loc.ahgt / 2, - @loc.ahgt / 2)
+                         , (- @loc.w       , 0)
+                         , (- @loc.ahgt / 2, @loc.ahgt / 2)
+                         , (0              , @loc.nhgt)
+                         , (@loc.ahgt / 2  , @loc.ahgt / 2)
+                         ]
+              , Disk (1, 2 / 5, 0)
+                     @loc.sourcePos
+                     (0.45 * @loc.ahgt)
+              , Disk (0, 2 / 3, 3 / 4)
+                     @loc.targetPos
+                     (0.45 * @loc.ahgt)
+              , Text (x + @loc.ahgt / 2, y - @loc.ahgt / 2)
+                     HorizontalAlignLeft
+                     VerticalAlignBottom
+                     @lhs.nodeFont
+                     @hd
+              ] <>)
+
+sem Production
+  | Production
+      (loc.w, loc.h) = @lhs.bb
+      parent.pos = {
+        let (pw, ph) = @parent.bb
+        in (@loc.w / 2 - pw / 2, 0.2 * @loc.h + ph / 2)
+      }
+      parent.role = NodeRoleParent
+      children.pos = {
+        let (cw, ch) = @children.bb
+        in (@loc.w / 2 - cw / 2, 0.8 * @loc.h + ch / 2)
+      }
+      children.role = NodeRoleChild
+      locals.pos = let (lw, lh) = @locals.bb
+                       (pw, _ph) = @parent.bb
+                   in (@loc.w / 2 + pw / 2 + 20 - lw / 2, @loc.h / 2 + lh / 2)
+      connections.bb = @lhs.bb
+      connections.sources = @locals.sources <> @children.sources <> @parent.sources
+      connections.targets = @locals.targets <> @children.targets <> @parent.targets
+      loc.shapes = @connections.shapes <> @locals.shapes <> @children.shapes <> @parent.shapes
+
+sem Connection
+  | Connection
+      +shapes = case (,) <$> Map.lookup @source @lhs.sources <*> Map.lookup @target @lhs.targets of
+                  Nothing -> id
+                  Just ((x,y),(x',y')) -> 
+                    ([ Bezier
+                       (x, y)
+                       ( x
+                       , if addressField @source == "lhs"
+                         then y + 0.2 * snd @lhs.bb
+                         else y - 0.2 * snd @lhs.bb
+                       )
+                       ( x'
+                       , if addressField @target `elem` ["lhs", "loc"]
+                         then y' + 0.2 * snd @lhs.bb
+                         else y' - 0.2 * snd @lhs.bb
+                       )
+                       (x', y')
+                     ] <>)
+
+{
+grammarShapes
+  :: Cairo
+  -> FontOptions
+  -> FontExtents
+  -> FontOptions
+  -> FontExtents
+  -> (Double, Double)
+  -> Text -- ^ nonterminal name
+  -> Text -- ^ production constructor name
+  -> Grammar
+  -> [Shape]
+grammarShapes cairo nodeFont nodeFontExtents attrFont attrFontExtents bb nont prod gram =
+  shapes_Syn_Grammar $ wrap_Grammar (sem_Grammar gram) Inh_Grammar
+    { cairo_Inh_Grammar           = cairo
+    , nodeFont_Inh_Grammar        = nodeFont
+    , nodeFontExtents_Inh_Grammar = nodeFontExtents
+    , attrFont_Inh_Grammar        = attrFont
+    , attrFontExtents_Inh_Grammar = attrFontExtents
+    , bb_Inh_Grammar              = bb
+    , chosenNont_Inh_Grammar      = nont
+    , chosenProd_Inh_Grammar      = prod
+    }
+}

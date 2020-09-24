@@ -1,23 +1,32 @@
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 module Main
   ( main
   )
 where
 
 import           Data.GI.Base
+import           Data.GI.Base.GType             ( gtypeString )
 
-import           Graphics.Rendering.Cairo
 import           Graphics.Rendering.Cairo.Internal
                                                 ( Render(runRender) )
 import           Graphics.Rendering.Cairo.Types ( Cairo(Cairo) )
 import           Foreign.Ptr                    ( castPtr )
 import           Control.Monad.Reader           ( ReaderT(runReaderT) )
 
-import qualified GI.Cairo                      as Cairo
+import           GI.Cairo                       ( Context(..) )
 import qualified GI.Gdk                        as Gdk
 import qualified GI.Gtk                        as Gtk
 import qualified GI.Gio                        as Gio
+
+import           Data.Aeson                     ( eitherDecode )
+import qualified Data.ByteString.Lazy          as ByteString
+
+import           Data.Text                      ( Text )
+
+import           Data.IORef
+import           Data.Foldable                  ( for_ )
 
 import           Mirage
 
@@ -31,7 +40,7 @@ import           Mirage
 -- * The draw signal to handle redrawing the contents of the widget.
 
 buttonPressEvent :: Gtk.DrawingArea -> Gdk.EventButton -> IO Bool
-buttonPressEvent area eventButton = do
+buttonPressEvent _area _eventButton = do
 
   -- putStrLn "BUTTON PRESS EVENT"
 
@@ -66,7 +75,7 @@ buttonPressEvent area eventButton = do
   return True
 
 buttonReleaseEvent :: Gtk.DrawingArea -> Gdk.EventButton -> IO Bool
-buttonReleaseEvent area eventButton = do
+buttonReleaseEvent _area _eventButton = do
 
   -- putStrLn "BUTTON RELEASE EVENT"
 
@@ -101,7 +110,7 @@ buttonReleaseEvent area eventButton = do
   return True
 
 motionNotifyEvent :: Gtk.DrawingArea -> Gdk.EventMotion -> IO Bool
-motionNotifyEvent area eventMotion = do
+motionNotifyEvent _area _eventMotion = do
 
   -- putStrLn "BUTTON RELEASE EVENT"
 
@@ -132,17 +141,22 @@ motionNotifyEvent area eventMotion = do
   return True
 
 realize :: Gtk.DrawingArea -> IO ()
-realize area = do
+realize _area = do
 
 
   return ()
 
 sizeAllocate :: Gtk.DrawingArea -> Gdk.Rectangle -> IO ()
-sizeAllocate area rectangle = do
+sizeAllocate _area _rectangle = do
   return ()
 
-draw :: Gtk.DrawingArea -> Cairo.Context -> IO Bool
-draw area ctx = do
+draw
+  :: IORef (Maybe (Text, Text))
+  -> IORef (Maybe Grammar)
+  -> Gtk.DrawingArea
+  -> Context
+  -> IO Bool
+draw selectedRef mayGrammarRef area ctx = do
   r               <- #getAllocation area
   x               <- fromIntegral <$> get r #x
   y               <- fromIntegral <$> get r #y
@@ -157,7 +171,12 @@ draw area ctx = do
     =<< #getColor refStyleContext
     =<< #getState refStyleContext
 
-  renderWithContext ctx (renderRule (width, height) isOrderedExample)
+  mayGrammar  <- readIORef mayGrammarRef
+  maySelected <- readIORef selectedRef
+  case (,) <$> mayGrammar <*> maySelected of
+    Nothing -> return ()
+    Just (grammar, (nont, prod)) ->
+      renderWithContext ctx (renderGrammar (width, height) grammar nont prod)
 
   return True
 
@@ -165,24 +184,135 @@ draw area ctx = do
 -- package. It takes a `GI.Cairo.Context` (as it appears in gi-cairo),
 -- and a `Render` action (as in the cairo lib), and renders the
 -- `Render` action into the given context.
-renderWithContext :: Cairo.Context -> Render a -> IO a
+renderWithContext :: Context -> Render a -> IO a
 renderWithContext ct r =
   withManagedPtr ct $ \p -> runReaderT (runRender r) (Cairo (castPtr p))
 
+openFile :: Gtk.TreeStore -> IORef (Maybe Grammar) -> IO ()
+openFile store mayGrammarRef = do
+  dialog <- new Gtk.FileChooserDialog
+                [#title := "Open File", #action := Gtk.FileChooserActionOpen]
+
+  _ <- #addButton dialog
+                  "Cancel"
+                  (fromIntegral (fromEnum Gtk.ResponseTypeCancel))
+  _ <- #addButton dialog "Open" (fromIntegral (fromEnum Gtk.ResponseTypeAccept))
+
+  fileFilter <- new Gtk.FileFilter []
+  #addPattern fileFilter "*.mirage"
+  _   <- #setFilter dialog fileFilter
+
+  res <- #run dialog
+
+  case toEnum (fromIntegral res) of
+    Gtk.ResponseTypeAccept -> do
+      mayFileName <- #getFilename dialog
+      case mayFileName of
+        Nothing       -> return ()
+        Just fileName -> do
+          fileContents <- ByteString.readFile fileName
+          mayGrammar   <- either ((Nothing <$) . print)
+                                 (return . Just)
+                                 (eitherDecode fileContents)
+          case mayGrammar of
+            Nothing      -> return ()
+            Just grammar -> do
+              writeIORef mayGrammarRef (Just grammar)
+
+              #clear store
+              for_ (nontsAndProds grammar) $ \(nont, prods) -> do
+                nontIter <- #append store Nothing
+                #setValue store nontIter 0 =<< toGValue (Just nont)
+                for_ prods $ \prod -> do
+                  prodIter <- #append store (Just nontIter)
+                  #setValue store prodIter 0 =<< toGValue (Just prod)
+                  -- prodValue <- #getValue store prodIter 0
+                  -- mayProd <- fromGValue prodValue
+                  -- case mayProd of
+                  --   Nothing -> return ()
+                  --   Just prod -> Text.putStrLn prod
+    _ -> return ()
+
+  #destroy dialog
+
+-- https://developer.gnome.org/gtk3/stable/TreeWidget.html
+setupTree
+  :: Gtk.DrawingArea
+  -> IO (Gtk.TreeStore, Gtk.TreeView, IORef (Maybe (Text, Text)))
+setupTree area = do
+  selectedRef <- newIORef Nothing
+
+  store       <- Gtk.treeStoreNew [gtypeString, gtypeString]
+
+  tree        <- Gtk.treeViewNewWithModel store
+  #setHeadersVisible tree False
+
+  renderer <- new Gtk.CellRendererText []
+  column   <- new Gtk.TreeViewColumn []
+  #packStart column renderer False
+  #addAttribute column renderer "text" 0
+  _      <- #appendColumn tree column
+
+  select <- #getSelection tree
+  #setMode select Gtk.SelectionModeSingle
+  _ <- on select #changed $ do
+    (isSelected, model, iter) <- #getSelected select
+    if isSelected
+      then do
+        prodValue             <- #getValue model iter 0
+        (hasParent, nontIter) <- #iterParent model iter
+        if hasParent
+          then do
+            nontValue <- #getValue model nontIter 0
+
+            mayProd   <- fromGValue prodValue
+            mayNont   <- fromGValue nontValue
+            case (,) <$> mayProd <*> mayNont of
+              Nothing           -> return () -- "Empty selection"
+              Just (prod, nont) -> do
+                writeIORef selectedRef (Just (nont, prod))
+                #queueDraw area
+          else return () -- No parent
+      else return () -- No selection
+
+  return (store, tree, selectedRef)
+
 activateApp :: Gtk.Application -> IO ()
 activateApp app = do
-  window <- Gtk.applicationWindowNew app
-  area   <- new Gtk.DrawingArea []
+  window         <- Gtk.applicationWindowNew app
 
-  #add window area
+  vBox           <- new Gtk.Box [#orientation := Gtk.OrientationVertical]
+  toolbar        <- new Gtk.Toolbar []
+  openFileButton <- new Gtk.ToolButton [#label := "Open File"]
+  hBox           <- new Gtk.Box [#orientation := Gtk.OrientationHorizontal]
+  area           <- new Gtk.DrawingArea []
+  scroll <- new Gtk.ScrolledWindow [#hscrollbarPolicy := Gtk.PolicyTypeNever]
 
-  on area #realize            (realize area)
-  on area #sizeAllocate       (sizeAllocate area)
-  on area #draw               (draw area)
+  mayGrammarRef  <- newIORef Nothing
 
-  on area #buttonPressEvent   (buttonPressEvent area)
-  on area #buttonReleaseEvent (buttonReleaseEvent area)
-  on area #motionNotifyEvent  (motionNotifyEvent area)
+  #insert toolbar openFileButton 0
+  #packStart vBox toolbar False False 0
+
+
+  (store, tree, selectedRef) <- setupTree area
+
+  #add scroll tree
+  #packStart hBox scroll False False 0
+
+  _ <- on openFileButton #clicked (openFile store mayGrammarRef)
+
+  #packStart hBox area True True 0
+
+  #packStart vBox hBox True True 0
+  #add window vBox
+
+  _ <- on area #realize (realize area)
+  _ <- on area #sizeAllocate (sizeAllocate area)
+  _ <- on area #draw (draw selectedRef mayGrammarRef area)
+
+  _ <- on area #buttonPressEvent (buttonPressEvent area)
+  _ <- on area #buttonReleaseEvent (buttonReleaseEvent area)
+  _ <- on area #motionNotifyEvent (motionNotifyEvent area)
 
   #addEvents
     area
@@ -203,7 +333,7 @@ main = do
     , #flags := [Gio.ApplicationFlagsFlagsNone]
     ]
 
-  on app #activate (activateApp app)
-  Gio.applicationRun app Nothing
+  _ <- on app #activate (activateApp app)
+  _ <- Gio.applicationRun app Nothing
 
   return ()

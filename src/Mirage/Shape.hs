@@ -13,7 +13,7 @@ data VerticalAlign
   = VerticalAlignCenter
   | VerticalAlignBottom
   | VerticalAlignTop
-  deriving Eq
+  deriving (Eq, Show)
 
 -- | Calculate the relative vertical offset from the (standard) bottom left
 -- corner of the text bounding box.
@@ -27,7 +27,7 @@ data HorizontalAlign
   = HorizontalAlignLeft
   | HorizontalAlignCenter
   | HorizontalAlignRight
-  deriving Eq
+  deriving (Eq, Show)
 
 -- | Calculate the relative horizontal offset from the (standard) bottom left
 -- corner of the text bounding box.
@@ -43,31 +43,32 @@ data Shape
   | Disk (Double, Double, Double) (Double, Double) Double
   | Text (Double, Double) HorizontalAlign VerticalAlign FontOptions Text
   | Bezier (Double, Double) (Double, Double) (Double, Double) (Double, Double)
+  deriving Show
 
-mirrorPointVertically :: (Double, Double) -> (Double, Double)
-mirrorPointVertically (x, y) = (x, -y)
-
-mirrorVerticalAlignVertically :: VerticalAlign -> VerticalAlign
-mirrorVerticalAlignVertically x = case x of
-  VerticalAlignTop    -> VerticalAlignBottom
-  VerticalAlignCenter -> VerticalAlignCenter
-  VerticalAlignBottom -> VerticalAlignTop
-
-mirrorShapeVertically :: Shape -> Shape
-mirrorShapeVertically (PolyLine x xs) =
-  PolyLine (mirrorPointVertically x) (map mirrorPointVertically xs)
-mirrorShapeVertically (Disk color x r) = Disk color (mirrorPointVertically x) r
-mirrorShapeVertically (Text x ha va font txt) =
-  Text (mirrorPointVertically x) ha (mirrorVerticalAlignVertically va) font txt
-
-translatePoint :: (Double, Double) -> (Double, Double) -> (Double, Double)
-translatePoint (x', y') (x, y) = (x + x', y + y')
-
-translateShape :: (Double, Double) -> Shape -> Shape
-translateShape x' (PolyLine x xs ) = PolyLine (translatePoint x' x) xs
-translateShape x' (Disk color x r) = Disk color (translatePoint x' x) r
-translateShape x' (Text x ha va font txt) =
-  Text (translatePoint x' x) ha va font txt
+-- mirrorPointVertically :: (Double, Double) -> (Double, Double)
+-- mirrorPointVertically (x, y) = (x, -y)
+-- 
+-- mirrorVerticalAlignVertically :: VerticalAlign -> VerticalAlign
+-- mirrorVerticalAlignVertically x = case x of
+--   VerticalAlignTop    -> VerticalAlignBottom
+--   VerticalAlignCenter -> VerticalAlignCenter
+--   VerticalAlignBottom -> VerticalAlignTop
+-- 
+-- mirrorShapeVertically :: Shape -> Shape
+-- mirrorShapeVertically (PolyLine x xs) =
+--   PolyLine (mirrorPointVertically x) (map mirrorPointVertically xs)
+-- mirrorShapeVertically (Disk color x r) = Disk color (mirrorPointVertically x) r
+-- mirrorShapeVertically (Text x ha va font txt) =
+--   Text (mirrorPointVertically x) ha (mirrorVerticalAlignVertically va) font txt
+-- 
+-- translatePoint :: (Double, Double) -> (Double, Double) -> (Double, Double)
+-- translatePoint (x', y') (x, y) = (x + x', y + y')
+-- 
+-- translateShape :: (Double, Double) -> Shape -> Shape
+-- translateShape x' (PolyLine x xs ) = PolyLine (translatePoint x' x) xs
+-- translateShape x' (Disk color x r) = Disk color (translatePoint x' x) r
+-- translateShape x' (Text x ha va font txt) =
+--   Text (translatePoint x' x) ha va font txt
 
 data FontWeight = FontWeightNormal | FontWeightBold deriving (Eq, Show)
 
@@ -75,17 +76,17 @@ data FontOptions = FontOptions
   { fontOptionsSize     :: Double
   , fontOptionsFontFace :: Text
   , fontOptionsWeight   :: FontWeight
-  }
+  } deriving Show
 
 data FontExtents = FontExtents
   { fontExtentsVerticalSpacing :: Double
   , fontExtentsDescent         :: Double
   , fontExtentsAscent          :: Double
-  }
+  } deriving Show
 
 fontExtentsHeight :: FontExtents -> Double
 fontExtentsHeight (FontExtents vs d a) = vs + d + a
 
 data TextExtents = TextExtents
   { textExtentsWidth :: Double
-  }
+  } deriving Show

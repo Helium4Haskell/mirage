@@ -1,2 +1,8 @@
-file: "src/Mirage/AG.ag"
-options: haskellsyntax, module "Mirage.AG", catas, semfuns, signatures, wrappers, data, genvisage
+file: "src/Mirage/AbstractSyntax.ag"
+options: haskellsyntax, module "Mirage.AbstractSyntax", pretty, genlinepragmas, checkParseHaskell, data
+
+file: "src/Mirage/RenderShapes.ag"
+options: haskellsyntax, module "Mirage.RenderShapes", pretty, checkParseHaskell, self, wrappers, signatures, catas, semfuns, genlinepragmas, kennedywarren, genmirage
+
+file: "src/Mirage/NontsAndProds.ag"
+options: haskellsyntax, module "Mirage.NontsAndProds", pretty, checkParseHaskell, self, wrappers, signatures, catas, semfuns, genlinepragmas, kennedywarren, genmirage
