@@ -57,7 +57,7 @@ executable mirage
     , gi-gdk           ^>=3.0
     , gi-gio           ^>=2.0
     , gi-gtk           ^>=3.0
-    , haskell-gi-base  ==0.23.0
+    , haskell-gi-base  ^>=0.24
     , mirage
     , mtl              ^>=2.2
     , text             ^>=1.2

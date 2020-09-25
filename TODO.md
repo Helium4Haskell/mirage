@@ -6,19 +6,27 @@ Short term:
   * [x] Proper layout.
   * [x] Parse a-terms and extract dependencies (consider using UUAGC)
   * [x] Add selection menu to select other nonterminals and productions
-  * [ ] Fix terminals and local variables
+  * [x] Bug: Fix terminals and local variables
+  * [ ] Make implicit connections visually distinct (light, dotted, thin)
+  * [ ] Layout local attributes:
+    * [ ] Move downward attributes to the left side
+    * [ ] Multiple layers of local variables
+  * [ ] Filtering the display attributes
   * [ ] Events:
     * [ ] Hover over attributes to see implementation
     * [ ] Drag background to pan
     * [ ] Drag local variables
     * [ ] Flip local attributes (with right-click maybe?)
-  * [ ] Make implicit connections visually distinct (light, dotted, thin)
-  * [ ] Add arrow heads to indicate direction
+  * [ ] Expand all + search box for the side panel
+  * [ ] Add arrow heads to indicate direction (make blue disks into triangles)
   * [ ] Better vertical alignment (not centered)
+  * [ ] Open multiple files at the same time
+  * [ ] Search in sidebar
 
 Long term:
 
+  * [ ] Ordering attributes
+  * [ ] Smart filters / heuristic grouping
   * [ ] Persistance
-  * [ ] Filtering the display attributes
   * [ ] Omission of attributes on nodes with too many attributes
   * [ ] Indirect dependency analysis
