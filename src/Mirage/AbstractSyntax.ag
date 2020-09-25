@@ -6,12 +6,10 @@ optpragmas
 
 imports {
 import           Data.Text                      ( Text )
--- import qualified Data.Text                     as Text
 
 import           Mirage.Shape
 import           Mirage.CommonTypes
 
--- import           Data.Aeson
 import           GHC.Generics
 }
 
@@ -52,6 +50,8 @@ data Rule
 
 deriving Grammar Nonterminal Attribute Production Child Rule : Generic, Show
 
+-- This belongs to RenderShapes.ag
+
 data Node
   | Node name :: Text
          inhs :: Attributes
@@ -60,6 +60,7 @@ data Node
 data Connection
   | Connection source :: Address
                target :: Address
+               explicit :: Bool
 
 deriving Connection : Eq, Ord
 

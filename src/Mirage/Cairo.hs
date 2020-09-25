@@ -9,11 +9,16 @@ import           Graphics.Rendering.Cairo
                                                 )
 import qualified Mirage.Shape                  as Mirage
 import           Mirage.Shape                   ( Shape(..)
+                                                , Color(..)
                                                 , verticalAlignOffset
                                                 , horizontalAlignOffset
                                                 )
 import           Data.Text                      ( Text )
 import           Data.Foldable                  ( traverse_ )
+
+setSourceColor :: Color -> Render ()
+setSourceColor (RGB r g b   ) = setSourceRGB r g b
+setSourceColor (RGBA r g b a) = setSourceRGBA r g b a
 
 renderShape :: Shape -> Render ()
 renderShape (PolyLine x xs) = do
@@ -26,10 +31,10 @@ renderShape (PolyLine x xs) = do
   uncurry moveTo x
   traverse_ (uncurry relLineTo) xs
   stroke
-renderShape (Disk (r, g, b) (x, y) radius) = do
+renderShape (Disk color (x, y) radius) = do
   save
   moveTo 0 0
-  setSourceRGB r g b
+  setSourceColor color
   arc x y radius 0 (2 * pi)
   fill
   restore
@@ -43,10 +48,13 @@ renderShape (Text (x, y) ha va f@(Mirage.FontOptions sz face wgt) txt) = do
   selectFontFace @Text face FontSlantNormal (mirageFontWeightCairo wgt)
   showText txt
   stroke
-renderShape (Bezier (x1, y1) (x2, y2) (x3, y3) (x4, y4)) = do
+renderShape (Bezier color (x1, y1) (x2, y2) (x3, y3) (x4, y4)) = do
+  save
   moveTo x1 y1
+  setSourceColor color
   curveTo x2 y2 x3 y3 x4 y4
   stroke
+  restore
 
 mirageFontWeightCairo :: Mirage.FontWeight -> FontWeight
 mirageFontWeightCairo w = case w of

@@ -64,7 +64,7 @@ attr Rules Rule
 
 sem Rule
   | Rule lhs.gathLocals = Set.fromList [y | Address x y <- @targets, x == "loc"]
-         lhs.gathConnections = Set.fromList [Connection x y | x <- @sources, y <- @targets]
+         lhs.gathConnections = Set.fromList [Connection x y @explicit | x <- @sources, y <- @targets]
           
 {
 data AttrLoc = AttrLocLeft | AttrLocRight deriving Eq
@@ -179,7 +179,9 @@ sem Attribute
                                else @loc.w + @loc.h 
       loc.y = snd @lhs.pos - @loc.h / 2
      +shapes
-       = ([ Disk (if @loc.isSource then (1, 2 / 5, 0) else (0, 2 / 3, 3 / 4))
+       = ([ Disk (if @loc.isSource
+                    then RGB 1 (2 / 5) 0
+                    else RGB 0 (2 / 3) (3 / 4))
                  (@loc.x, @loc.y) 
                  (0.45 * @loc.h)
           , Text ( @loc.x + if @lhs.location == AttrLocLeft
@@ -254,7 +256,7 @@ sem Node
                  @name
                ]
                ++ if @loc.hasSource
-                    then [Disk (1, 2 / 5, 0) @loc.portPos (0.45 * @loc.ahgt)]
+                    then [Disk (RGB 1 (2 / 5) 0) @loc.portPos (0.45 * @loc.ahgt)]
                     else []
               ) <>)
 
@@ -293,10 +295,10 @@ sem Locals
                          , (0              , @loc.nhgt)
                          , (@loc.ahgt / 2  , @loc.ahgt / 2)
                          ]
-              , Disk (1, 2 / 5, 0)
+              , Disk (RGB 1 (2 / 5) 0)
                      @loc.sourcePos
                      (0.45 * @loc.ahgt)
-              , Disk (0, 2 / 3, 3 / 4)
+              , Disk (RGB 0 (2 / 3) (3 / 4))
                      @loc.targetPos
                      (0.45 * @loc.ahgt)
               , Text (x + @loc.ahgt / 2, y - @loc.ahgt / 2)
@@ -333,6 +335,7 @@ sem Connection
                   Nothing -> id
                   Just ((x,y),(x',y')) -> 
                     ([ Bezier
+                       (RGBA 0 0 0 (if @explicit then 1 else 0.2))
                        (x, y)
                        ( x
                        , if addressField @source == "lhs"

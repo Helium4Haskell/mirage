@@ -7,7 +7,7 @@ Short term:
   * [x] Parse a-terms and extract dependencies (consider using UUAGC)
   * [x] Add selection menu to select other nonterminals and productions
   * [x] Bug: Fix terminals and local variables
-  * [ ] Make implicit connections visually distinct (light, dotted, thin)
+  * [x] Make implicit connections visually distinct (light, dotted, thin)
   * [ ] Layout local attributes:
     * [ ] Move downward attributes to the left side
     * [ ] Multiple layers of local variables

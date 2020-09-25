@@ -37,12 +37,19 @@ horizontalAlignOffset x = case x of
   HorizontalAlignCenter -> 1 / 2
   HorizontalAlignRight  -> 1
 
+data Color
+  = RGB Double Double Double
+  | RGBA Double Double Double Double
+  deriving Show
+
+type Position = (Double, Double)
+
 data Shape
-  = PolyLine (Double, Double) -- ^ origin
-             [(Double, Double)] -- ^ offsets
-  | Disk (Double, Double, Double) (Double, Double) Double
-  | Text (Double, Double) HorizontalAlign VerticalAlign FontOptions Text
-  | Bezier (Double, Double) (Double, Double) (Double, Double) (Double, Double)
+  = PolyLine Position -- ^ origin
+             [Position] -- ^ offsets
+  | Disk Color Position Double
+  | Text Position HorizontalAlign VerticalAlign FontOptions Text
+  | Bezier Color Position Position Position Position
   deriving Show
 
 -- mirrorPointVertically :: (Double, Double) -> (Double, Double)
