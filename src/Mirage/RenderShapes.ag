@@ -18,7 +18,6 @@ import           Mirage.Shape
 import           Mirage.Cairo
 import           Mirage.AbstractSyntax
 import           Mirage.CommonTypes
-import           Mirage.Instances
 
 import           System.IO.Unsafe               ( unsafePerformIO )
 import           Control.Monad.Trans.Reader

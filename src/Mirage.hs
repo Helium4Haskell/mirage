@@ -17,7 +17,6 @@ import           Mirage.AbstractSyntax
 import           Mirage.NontsAndProds
 import           Mirage.RenderShapes
 import           Mirage.CommonTypes             ( )
-import           Mirage.Instances               ( )
 
 {-
 binExample :: Grammar

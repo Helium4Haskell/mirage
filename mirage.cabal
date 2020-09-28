@@ -25,7 +25,6 @@ library
     Mirage.AbstractSyntax
     Mirage.Cairo
     Mirage.CommonTypes
-    Mirage.Instances
     Mirage.NontsAndProds
     Mirage.RenderShapes
     Mirage.Shape

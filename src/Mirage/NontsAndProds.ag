@@ -3,7 +3,6 @@ include "AbstractSyntax.ag"
 imports {
 import           Data.Text                      ( Text )
 import           Mirage.AbstractSyntax
-import           Mirage.Instances               ( )
 }
 
 attr Grammar Nonterminals Nonterminal

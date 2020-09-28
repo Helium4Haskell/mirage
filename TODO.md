@@ -21,7 +21,8 @@ Short term:
   * [ ] Add arrow heads to indicate direction (make blue disks into triangles)
   * [ ] Better vertical alignment (not centered)
   * [ ] Open multiple files at the same time
-  * [ ] Search in sidebar
+  * [ ] Search in sidebar (is already present, but not satisfactory)
+  * [ ] Don't show node self disks (maybe also for locals) if they're not used
 
 Long term:
 

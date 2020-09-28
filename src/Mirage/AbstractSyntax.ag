@@ -1,7 +1,7 @@
 optpragmas
 {
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveGeneric, DeriveAnyClass #-}
 }
 
 imports {
@@ -10,6 +10,7 @@ import           Data.Text                      ( Text )
 import           Mirage.Shape
 import           Mirage.CommonTypes
 
+import           Data.Aeson                     ( FromJSON )
 import           GHC.Generics
 }
 
@@ -48,7 +49,8 @@ data Rule
                  explicit    :: Bool
                  definition  :: Text
 
-deriving Grammar Nonterminal Attribute Production Child Rule : Generic, Show
+deriving Grammar Nonterminal Attribute Production Child Rule
+  : FromJSON, Generic, Show
 
 -- This belongs to RenderShapes.ag
 
