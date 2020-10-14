@@ -1,0 +1,62 @@
+include "AbstractSyntax.ag"
+
+module {Mirage.DependencyGraph}
+{ graphToConnections
+, transitiveClosure
+, dependencyGraph
+, Graph
+}{}
+
+imports {
+import           Mirage.AbstractSyntax
+import           Mirage.CommonTypes
+
+import qualified Data.Set                      as Set
+import           Data.Set                       ( Set )
+import qualified Data.Map.Monoidal             as MonoidalMap
+import           Data.Map.Monoidal              ( MonoidalMap )
+import qualified Data.Text                     as Text
+import           Data.Text                      ( Text )
+import           Data.Foldable                  ( fold )
+}
+
+attr Grammar Nonterminals Nonterminal Productions Production Rules Rule
+  syn dependencyGraph use {(<>)} {mempty} :: {Graph}
+
+sem Rule
+  | Rule lhs.dependencyGraph
+      = MonoidalMap.fromListWith
+        (<>)
+        [ (y, Set.singleton (x, @explicit)) | x <- @sources, y <- @targets ]
+
+{
+type Graph = MonoidalMap Address (Set (Address, Bool))
+
+graphToConnections :: Graph -> Connections
+graphToConnections g = concat $ MonoidalMap.elems $ MonoidalMap.mapWithKey
+  (\tgt s -> map (\ ~(src, ex) -> Connection src tgt ex) (Set.toList s))
+  g
+
+transitiveClosure :: Text -> Graph -> [Set Text]
+transitiveClosure attr m
+  | Set.null startAddrs = [Set.singleton attr]
+  | otherwise = map (Set.map (\ ~(Address _ x) -> x)) $ go mempty startAddrs
+ where
+  -- find all addresses in the graph that have the given attribute name
+  startAddrs = Set.filter
+    (\ ~(Address _ attr') -> attr == attr')
+    (Set.fromList (MonoidalMap.keys m') <> fold (MonoidalMap.elems m'))
+
+  go seen addrs | Set.null addrs = []
+                | otherwise      = addrs : go seen' addrs'
+   where
+    addrs' =
+      foldMap (\x -> MonoidalMap.findWithDefault mempty x m') addrs Set.\\ seen'
+    seen' = seen <> addrs
+
+  m' = MonoidalMap.map (Set.mapMonotonic fst) m
+
+dependencyGraph :: Grammar -> Graph
+dependencyGraph gram =
+  dependencyGraph_Syn_Grammar $ wrap_Grammar (sem_Grammar gram) Inh_Grammar{}
+}

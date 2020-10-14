@@ -1,0 +1,50 @@
+include "AbstractSyntax.ag"
+
+module {Mirage.StaticInfo} {staticInfo, StaticInfo (StaticInfo)}
+{
+import           Data.Text                      ( Text )
+import           Mirage.AbstractSyntax
+import           Mirage.CommonTypes
+import           Data.Set                       ( Set )
+import qualified Data.Set                      as Set
+}
+
+{
+data StaticInfo = StaticInfo
+  { nontsAndProds :: [(Text, [Text])]
+  , attrNames     :: Set Text
+  }
+
+instance Semigroup StaticInfo where
+  StaticInfo x1 x2 <> StaticInfo y1 y2 = StaticInfo (x1 <> y1) (x2 <> y2)
+
+instance Monoid StaticInfo where
+  mempty = StaticInfo mempty mempty
+}
+
+attr Grammar Nonterminals Nonterminal
+  syn staticInfo use {<>} {mempty} :: {StaticInfo}
+
+attr Productions Production
+  syn prods use {<>} {mempty} :: {[Text]}
+
+attr Attributes Attribute
+  syn attrNames use {<>} {mempty} :: {Set Text}
+
+sem Nonterminal
+  | Nonterminal
+      lhs.staticInfo = StaticInfo [(@name, @prods.prods)] @attributes.attrNames
+      inst.attributes :: Attributes
+      inst.attributes = @inhs <> @syns
+
+sem Production
+  | Production lhs.prods = [@name]
+
+sem Attribute
+  | Attribute lhs.attrNames = Set.singleton @name
+
+{
+staticInfo :: Grammar -> StaticInfo
+staticInfo gram =
+  staticInfo_Syn_Grammar $ wrap_Grammar (sem_Grammar gram) Inh_Grammar
+}

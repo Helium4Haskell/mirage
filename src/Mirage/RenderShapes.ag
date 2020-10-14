@@ -1,18 +1,22 @@
 include "AbstractSyntax.ag"
+include "DependencyGraph.ag"
 
 optpragmas
 {
 {-# LANGUAGE OverloadedStrings #-}
 }
 
-imports {
+module {Mirage.RenderShapes} {grammarShapes, askCairo}
+{
 import           Data.Text                      ( Text )
 import           Data.Map                       ( Map )
 import qualified Data.Map                      as Map
 import           Data.Set                       ( Set )
 import qualified Data.Set                      as Set
 import           Graphics.Rendering.Cairo.Internal
-                                                ( Render(..), Cairo )
+                                                ( Render(..)
+                                                , Cairo
+                                                )
 
 import           Mirage.Shape
 import           Mirage.Cairo
@@ -21,6 +25,10 @@ import           Mirage.CommonTypes
 
 import           System.IO.Unsafe               ( unsafePerformIO )
 import           Control.Monad.Trans.Reader
+import           Control.Arrow                  ( first
+                                                , second
+                                                )
+import           Data.Monoid                    ( Sum )
 }
 
 attr Production Productions
@@ -29,15 +37,75 @@ attr Production Productions
 sem Nonterminal
   | Nonterminal prods.parentAttrs = (@inhs, @syns)
 
+{
+data Deps = Deps
+  { depsLhs   :: Sum Int
+  , depsLoc   :: Sum Int
+  , depsChild :: Sum Int
+  }
+
+instance Semigroup Deps where
+  Deps x1 x2 x3 <> Deps y1 y2 y3
+    = Deps (x1 <> y1) (x2 <> y2) (x3 <> y3)
+
+instance Monoid Deps where
+  mempty = Deps mempty mempty mempty
+
+mkDeps :: Set Text -> Address -> Deps
+mkDeps locs (Address fld attr) = case fld of
+  "lhs"                          -> Deps 1 0 0
+  "loc" | attr `Set.member` locs -> Deps 0 1 0
+  _                              -> Deps 0 0 1
+
+splitDepsHorizontally :: (Deps, Deps) -> Bool
+splitDepsHorizontally (Deps lhsIn locIn chldIn, Deps lhsOut locOut chldOut)
+  = lhsIn + chldOut > lhsOut + chldIn
+
+splitDepsVerticallyLeft :: (Deps, Deps) -> Bool
+splitDepsVerticallyLeft (Deps lhsIn locIn chldIn, Deps lhsOut locOut chldOut)
+  = lhsIn + lhsOut + locOut > locIn + chldOut + chldIn
+
+splitDepsVerticallyRight :: (Deps, Deps) -> Bool
+splitDepsVerticallyRight (Deps lhsIn locIn chldIn, Deps lhsOut locOut chldOut)
+  = lhsOut + lhsIn + locIn > locOut + chldIn + chldOut
+}
+
 sem Production
-  | Production inst.parent :: Node
-               inst.parent = uncurry (Node "lhs") @lhs.parentAttrs
+  | Production
+      inst.parent :: Node
+      inst.parent
+        = uncurry (Node "lhs") $ filterAttrs
+            ((if @lhs.hideImplicit
+                then Set.intersection @rules.activeAttributes
+                else id) @lhs.enabledAttrs)
+            @lhs.parentAttrs
 
-               inst.locals :: Locals
-               inst.locals = Set.toList (@rules.gathLocals)
+      (loc.leftLocalDeps, loc.rightLocalDeps)
+        = Map.partition splitDepsHorizontally @rules.localDeps
+      (loc.leftTopLocalDeps, loc.leftBottomLocalDeps)
+        = Map.partition splitDepsVerticallyLeft @loc.leftLocalDeps
+      (loc.rightTopLocalDeps, loc.rightBottomLocalDeps)
+        = Map.partition splitDepsVerticallyRight @loc.rightLocalDeps
 
-               inst.connections :: Connections
-               inst.connections = Set.toList (@rules.gathConnections)
+      inst.leftLocalsRows :: LocalsRows
+      inst.leftLocalsRows
+        = [ x
+          | x@(_ : _) <-
+            [ Map.keys @loc.leftTopLocalDeps
+            , Map.keys @loc.leftBottomLocalDeps
+            ]
+          ]
+      inst.rightLocalsRows :: LocalsRows
+      inst.rightLocalsRows
+        = [ x
+          | x@(_ : _) <-
+            [ Map.keys @loc.rightTopLocalDeps
+            , Map.keys @loc.rightBottomLocalDeps
+            ]
+          ]
+
+      inst.connections :: Connections
+      inst.connections = graphToConnections @rules.dependencyGraph
 
 attr Nonterminal Nonterminals
   syn nontMapSyn use {<>} {mempty} :: {Map Text (Attributes, Attributes)}
@@ -51,22 +119,74 @@ sem Grammar
 attr Child Children Production Productions Nonterminal Nonterminals
   inh nontMapInh :: {Map Text (Attributes, Attributes)}
 
+---
+
+attr Rules Rule
+  syn activeAttributes use {<>} {mempty} :: {Set Text}
+
+attr Children Child
+  inh activeAttributes :: {Set Text}
+
+sem Rule
+  | Rule lhs.activeAttributes
+    = if @explicit
+        then Set.fromList (map (\(Address _ x) -> x) (@sources <> @targets))
+        else mempty
+
+sem Production
+  | Production children.activeAttributes = @rules.activeAttributes
+
+{
+filterAttrs attrs =
+  both (filter (\(Attribute name _) -> name `Set.member` attrs))
+
+both :: (a -> b) -> (a, a) -> (b, b)
+both f ~(x, y) = (f x, f y)
+}
+
 sem Child
   | Child inst.node :: Node
-          inst.node = uncurry (Node @name) $ case @tp of
-                        NT tp _ -> @lhs.nontMapInh Map.! tp
-                        _ -> ([], [])
+          inst.node
+            = uncurry (Node @name) $ filterAttrs
+                ((if @lhs.hideImplicit
+                    then Set.intersection @lhs.activeAttributes
+                    else id) @lhs.enabledAttrs)
+                (case @tp of
+                   NT tp _ -> @lhs.nontMapInh Map.! tp
+                   _ -> ([], []))
 
 attr Rules Rule
   syn gathLocals      use {<>} {mempty} :: {Set Text}
-  syn gathConnections use {<>} {mempty} :: {Set Connection}
+  inh gatheredLocals :: {Set Text}
+  
+  syn localDeps  use {Map.unionWith (<>)} {mempty} :: {Map Text (Deps, Deps)}
+
+sem Production
+  | Production
+      rules.gatheredLocals = @rules.gathLocals
 
 sem Rule
-  | Rule lhs.gathLocals = Set.fromList [y | Address x y <- @targets, x == "loc"]
-         lhs.gathConnections = Set.fromList [Connection x y @explicit | x <- @sources, y <- @targets]
+  | Rule
+      lhs.gathLocals = Set.fromList [ x | Address "loc" x <- @targets ]
+      lhs.localDeps
+        = foldr
+          (Map.unionWith (<>))
+          mempty
+          [ (if f2 == "loc" && a2 `Set.member` locs
+               then Map.singleton a2 (mempty, mkDeps locs x)
+               else mempty
+            )
+              <> (if f1 == "loc" && a1 `Set.member` locs
+                    then Map.singleton a1 (mkDeps locs y, mempty)
+                    else mempty
+                 )
+          | x@(Address f1 a1) <- @targets
+          , y@(Address f2 a2) <- @sources
+          , let locs = @lhs.gatheredLocals
+          ]
           
 {
-data AttrLoc = AttrLocLeft | AttrLocRight deriving Eq
+data Side = SideLeft | SideRight deriving Eq
 
 data NodeRole = NodeRoleParent | NodeRoleChild deriving Eq
 
@@ -90,7 +210,8 @@ textExtents cairo font txt = unsafePerformIO $
   runReaderT (runRender (mirageTextExtents font txt)) cairo
 }
 
-attr Child Children Locals Attribute Attributes Production Productions Node Nonterminal Nonterminals Grammar
+attr Child Children Locals Attribute Attributes Production Productions Node
+     LocalsRows Nonterminal Nonterminals Grammar
   inh nodeFont :: FontOptions
   inh nodeFontExtents :: FontExtents
 
@@ -99,10 +220,11 @@ attr Child Children Locals Attribute Attributes Production Productions Node Nont
   
   inh cairo :: {Cairo}
 
-attr Grammar Nonterminals Nonterminal Productions Production Connections Connection
-  inh bb :: {(Double, Double)}
+attr Grammar Nonterminals Nonterminal Productions Production Connections
+     Connection LocalsRows
+  inh allocation :: {(Double, Double)}
 
-attr Child Children Locals Attribute Attributes Node
+attr Child Children LocalsRows Locals Attribute Attributes Node
   -- bounding box size
   syn bb :: {(Double, Double)}
   
@@ -113,7 +235,8 @@ attr Child Children Locals Attribute Attributes Node
   syn sources use {<>} {mempty} :: {Map Address (Double, Double)}
   syn targets use {<>} {mempty} :: {Map Address (Double, Double)}
 
-attr Grammar Nonterminals Nonterminal Productions Production Child Children Locals Connections Connection Attribute Attributes Node
+attr Grammar Nonterminals Nonterminal Productions Production Child Children
+     LocalsRows Locals Connections Connection Attribute Attributes Node
   syn shapes use {<>} {mempty} :: {[Shape]}
 
 attr Grammar Nonterminals Nonterminal 
@@ -122,8 +245,12 @@ attr Grammar Nonterminals Nonterminal
 attr Grammar Nonterminals Nonterminal Productions Production
   inh chosenProd :: Text
 
+attr Grammar Nonterminals Nonterminal Productions Production Children Child
+  inh hideImplicit :: Bool
+  inh enabledAttrs :: {Set Text}
+
 attr Attribute Attributes
-  inh location :: AttrLoc
+  inh location :: Side
   inh fieldName :: Text
   -- syn n use {+} {0} :: Int
 
@@ -143,19 +270,18 @@ attr Connections Connection
 sem Attributes
   | Nil lhs.bb = (0, 0)
   | Cons
-     -- +n = (+ 1)
       lhs.bb = (@loc.w, @loc.h)
       loc.(w, h) = ( max (fst @tl.bb) (fst @hd.bb + snd @tl.bb)
                    , snd @tl.bb + snd @hd.bb
                    )
-      tl.pos = ( fst @lhs.pos + if @lhs.location == AttrLocRight
+      tl.pos = ( fst @lhs.pos + if @lhs.location == SideRight
                                   then @loc.w - fst @tl.bb
                                   else 0
                , snd @lhs.pos - if @lhs.role == NodeRoleParent
                                   then snd @hd.bb
                                   else 0
                )
-      hd.pos = ( fst @lhs.pos + if @lhs.location == AttrLocRight
+      hd.pos = ( fst @lhs.pos + if @lhs.location == SideRight
                                   then @loc.w - snd @tl.bb - fst @hd.bb
                                   else snd @tl.bb
                , snd @lhs.pos - if @lhs.role == NodeRoleChild
@@ -168,12 +294,12 @@ sem Attribute
       lhs.bb = (@loc.w + 1.5 * @loc.h, @loc.h)
       loc.h = fontExtentsHeight @lhs.attrFontExtents
       (TextExtents loc.w) = textExtents @lhs.cairo @lhs.attrFont @name
-      loc.isSource = (@lhs.location == AttrLocLeft)
+      loc.isSource = (@lhs.location == SideLeft)
                        == (@lhs.role == NodeRoleParent)
       loc.addPort = Map.insert (Address @lhs.fieldName @name) (@loc.x, @loc.y)
      +sources = if @loc.isSource then @loc.addPort else id
      +targets = if @loc.isSource then id else @loc.addPort
-      loc.x = fst @lhs.pos + if @lhs.location == AttrLocLeft
+      loc.x = fst @lhs.pos + if @lhs.location == SideLeft
                                then 0.5 * @loc.h
                                else @loc.w + @loc.h 
       loc.y = snd @lhs.pos - @loc.h / 2
@@ -183,12 +309,12 @@ sem Attribute
                     else RGB 0 (2 / 3) (3 / 4))
                  (@loc.x, @loc.y) 
                  (0.45 * @loc.h)
-          , Text ( @loc.x + if @lhs.location == AttrLocLeft
+          , Text ( @loc.x + if @lhs.location == SideLeft
                               then @loc.h / 2
                               else - @loc.h / 2
                  , @loc.y
                  )
-                 (if @lhs.location == AttrLocLeft
+                 (if @lhs.location == SideLeft
                     then HorizontalAlignLeft
                     else HorizontalAlignRight)
                  VerticalAlignCenter
@@ -224,7 +350,7 @@ sem Node
                  else @loc.nhgt + max 0 (snd @inhs.bb - snd @syns.bb)
              )
       loc.fieldName = @name
-      (inhs.location, syns.location) = (AttrLocLeft, AttrLocRight)
+      (inhs.location, syns.location) = (SideLeft, SideRight)
       loc.portPos = (fst @lhs.pos + @loc.bb_w / 2, snd @lhs.pos - @loc.bb_h + @loc.ahgt / 2)
       +sources = if @loc.hasSource then Map.insert (Address "loc" @name) @loc.portPos else id
       +shapes
@@ -268,22 +394,45 @@ sem Children
                    (xs, ys) = @tl.bb
                in (x + 20 + xs, max y ys)
 
+attr LocalsRows
+  inh side :: Side
+
+sem LocalsRows
+  | Nil lhs.bb = (0, 0)
+  | Cons
+      lhs.bb
+        = let ~(w1, h1) = @tl.bb
+              ~(w2, h2) = @hd.bb
+              ~(_ , h3) = @lhs.allocation
+          in  (max w1 w2, h2 + if h1 > 0 then h1 + 0.1 * h3 else 0)
+      hd.pos
+        = let ~(x, y) = @lhs.pos
+          in ( x - if @lhs.side == SideRight then 0 else fst @hd.bb
+             , y - (snd @tl.bb + if snd @tl.bb > 0 then 0.1 * snd @lhs.allocation else 0)
+             )
+      tl.pos
+        = let ~(x, y) = @lhs.pos
+          in if @lhs.side == SideRight
+               then (x, y)
+               else (x - fst @tl.bb, y)
+
 sem Locals
   | Nil lhs.bb = (0, 0)
   | Cons
       loc.nhgt = fontExtentsHeight @lhs.nodeFontExtents
       loc.ahgt = fontExtentsHeight @lhs.attrFontExtents
       (TextExtents loc.w) = textExtents @lhs.cairo @lhs.nodeFont @hd
+      lhs.bb = (@loc.bb_w + fst @tl.bb, max @loc.bb_h (snd @tl.bb))
       loc.bb_w = @loc.w + @loc.ahgt
       loc.bb_h = 2 * @loc.ahgt + @loc.nhgt
-      tl.pos = let (x, y) = @lhs.pos in (x + @loc.bb_w + 20, y)
-      loc.sourcePos = let (x, y) = @lhs.pos in (x + @loc.bb_w / 2, y - @loc.bb_h + @loc.ahgt)
-      loc.targetPos = let (x, y) = @lhs.pos in (x + @loc.bb_w / 2, y)
+      tl.pos = let ~(x, y) = @lhs.pos in (x + @loc.bb_w + 20, y)
+      loc.sourcePos = let ~(x, y) = @lhs.pos in (x + @loc.bb_w / 2, y - @loc.bb_h + @loc.ahgt)
+      loc.targetPos = let ~(x, y) = @lhs.pos in (x + @loc.bb_w / 2, y)
       loc.insertLoc = Map.insert (Address "loc" @hd)
       +sources = @loc.insertLoc @loc.sourcePos
       +targets = @loc.insertLoc @loc.targetPos
       +shapes
-        = let (x, y) = @lhs.pos
+        = let ~(x, y) = @lhs.pos
           in ([ PolyLine (x + @loc.ahgt / 2,y)
                          [ (@loc.w         , 0)
                          , (@loc.ahgt / 2  , - @loc.ahgt / 2)
@@ -294,12 +443,8 @@ sem Locals
                          , (0              , @loc.nhgt)
                          , (@loc.ahgt / 2  , @loc.ahgt / 2)
                          ]
-              , Disk (RGB 1 (2 / 5) 0)
-                     @loc.sourcePos
-                     (0.45 * @loc.ahgt)
-              , Disk (RGB 0 (2 / 3) (3 / 4))
-                     @loc.targetPos
-                     (0.45 * @loc.ahgt)
+              , Disk (RGB 1 (2 / 5) 0) @loc.sourcePos (0.45 * @loc.ahgt)
+              , Disk (RGB 0 (2 / 3) (3 / 4)) @loc.targetPos (0.45 * @loc.ahgt)
               , Text (x + @loc.ahgt / 2, y - @loc.ahgt / 2)
                      HorizontalAlignLeft
                      VerticalAlignBottom
@@ -309,24 +454,30 @@ sem Locals
 
 sem Production
   | Production
-      (loc.w, loc.h) = @lhs.bb
-      parent.pos = {
-        let (pw, ph) = @parent.bb
-        in (@loc.w / 2 - pw / 2, 0.2 * @loc.h + ph / 2)
-      }
+      (loc.w, loc.h) = @lhs.allocation
+      parent.pos
+        = let ~(pw, ph) = @parent.bb
+          in  (@loc.w / 2 - pw / 2, 0.2 * @loc.h + ph / 2)
       parent.role = NodeRoleParent
-      children.pos = {
-        let (cw, ch) = @children.bb
-        in (@loc.w / 2 - cw / 2, 0.8 * @loc.h + ch / 2)
-      }
+      children.pos
+        = let ~(cw, ch) = @children.bb
+          in  (@loc.w / 2 - cw / 2, 0.8 * @loc.h + ch / 2)
       children.role = NodeRoleChild
-      locals.pos = let (lw, lh) = @locals.bb
-                       (pw, _ph) = @parent.bb
-                   in (@loc.w / 2 + pw / 2 + 20 - lw / 2, @loc.h / 2 + lh / 2)
-      connections.bb = @lhs.bb
-      connections.sources = @locals.sources <> @children.sources <> @parent.sources
-      connections.targets = @locals.targets <> @children.targets <> @parent.targets
-      loc.shapes = @connections.shapes <> @locals.shapes <> @children.shapes <> @parent.shapes
+      leftLocalsRows.pos
+        = let ~(lw, lh) = @leftLocalsRows.bb
+              ~(pw, _ph) = @parent.bb
+          in  (@loc.w / 2 - pw / 2 - lw, @loc.h / 2 + lh / 2)
+      rightLocalsRows.pos
+        = let ~(lw, lh) = @rightLocalsRows.bb
+              ~(pw, _ph) = @parent.bb
+          in  (@loc.w / 2 + pw / 2, @loc.h / 2 + lh / 2)
+      -- connections.bb = @lhs.allocation
+      connections.sources = @leftLocalsRows.sources <> @rightLocalsRows.sources <> @children.sources <> @parent.sources
+      connections.targets = @leftLocalsRows.targets <> @rightLocalsRows.targets <> @children.targets <> @parent.targets
+      loc.shapes = @connections.shapes <> @leftLocalsRows.shapes <> @rightLocalsRows.shapes <> @children.shapes <> @parent.shapes
+
+      leftLocalsRows.side = SideLeft
+      rightLocalsRows.side = SideRight
 
 sem Connection
   | Connection
@@ -338,13 +489,13 @@ sem Connection
                        (x, y)
                        ( x
                        , if addressField @source == "lhs"
-                         then y + 0.2 * snd @lhs.bb
-                         else y - 0.2 * snd @lhs.bb
+                         then y + 0.2 * snd @lhs.allocation
+                         else y - 0.2 * snd @lhs.allocation
                        )
                        ( x'
                        , if addressField @target `elem` ["lhs", "loc"]
-                         then y' + 0.2 * snd @lhs.bb
-                         else y' - 0.2 * snd @lhs.bb
+                         then y' + 0.2 * snd @lhs.allocation
+                         else y' - 0.2 * snd @lhs.allocation
                        )
                        (x', y')
                      ] <>)
@@ -357,19 +508,23 @@ grammarShapes
   -> FontOptions
   -> FontExtents
   -> (Double, Double)
-  -> Text -- ^ nonterminal name
-  -> Text -- ^ production constructor name
+  -> Text     -- ^ nonterminal name
+  -> Text     -- ^ production constructor name
+  -> Bool     -- ^ hide implicit attributes
+  -> Set Text -- ^ enabled attributes
   -> Grammar
   -> [Shape]
-grammarShapes cairo nodeFont nodeFontExtents attrFont attrFontExtents bb nont prod gram =
+grammarShapes cairo nodeFont nodeFontExtents attrFont attrFontExtents bb nont prod hideImplicit enabled gram =
   shapes_Syn_Grammar $ wrap_Grammar (sem_Grammar gram) Inh_Grammar
     { cairo_Inh_Grammar           = cairo
     , nodeFont_Inh_Grammar        = nodeFont
     , nodeFontExtents_Inh_Grammar = nodeFontExtents
     , attrFont_Inh_Grammar        = attrFont
     , attrFontExtents_Inh_Grammar = attrFontExtents
-    , bb_Inh_Grammar              = bb
+    , allocation_Inh_Grammar      = bb
     , chosenNont_Inh_Grammar      = nont
     , chosenProd_Inh_Grammar      = prod
+    , hideImplicit_Inh_Grammar    = hideImplicit
+    , enabledAttrs_Inh_Grammar    = enabled
     }
 }

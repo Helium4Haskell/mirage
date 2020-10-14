@@ -1,8 +1,14 @@
 file: "src/Mirage/AbstractSyntax.ag"
 options: haskellsyntax, module "Mirage.AbstractSyntax", pretty, genlinepragmas, checkParseHaskell, data
 
+file: "src/Mirage/DependencyGraph.ag"
+options: haskellsyntax, module "Mirage.DependencyGraph", pretty, checkParseHaskell, self, wrappers, signatures, catas, semfuns, kennedywarren, genmirage
+
 file: "src/Mirage/RenderShapes.ag"
 options: haskellsyntax, module "Mirage.RenderShapes", pretty, checkParseHaskell, self, wrappers, signatures, catas, semfuns, genlinepragmas, kennedywarren, genmirage
 
-file: "src/Mirage/NontsAndProds.ag"
-options: haskellsyntax, module "Mirage.NontsAndProds", pretty, checkParseHaskell, self, wrappers, signatures, catas, semfuns, genlinepragmas, kennedywarren, genmirage
+file: "src/Mirage/StaticInfo.ag"
+options: haskellsyntax, module "Mirage.StaticInfo", pretty, checkParseHaskell, self, wrappers, signatures, catas, semfuns, genlinepragmas, kennedywarren, genmirage
+
+file: "src/Mirage/MirageTest.ag"
+options: genmirage

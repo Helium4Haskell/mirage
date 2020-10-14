@@ -1,6 +1,8 @@
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE BlockArguments #-}
 module Main
   ( main
   )
@@ -26,9 +28,31 @@ import qualified Data.ByteString.Lazy          as ByteString
 import           Data.Text                      ( Text )
 
 import           Data.IORef
-import           Data.Foldable                  ( for_ )
+import           Data.Foldable                  ( for_
+                                                , traverse_
+                                                , fold
+                                                )
+import           Control.Monad                  ( when )
+import           Data.Maybe                     ( fromMaybe )
+import qualified Data.Set                      as Set
+import           Data.Traversable               ( for )
 
 import           Mirage
+
+data State = State
+  { stateGrammar      :: !(Maybe Grammar)
+  , stateSelected     :: !(Maybe (Text, Text))
+  , stateHideImplicit :: !Bool
+  }
+
+data Reader = Reader
+  { readerFilterWindow  :: !Gtk.Window
+  , readerDisabledStore :: !Gtk.ListStore
+  , readerEnabledStore  :: !Gtk.ListStore
+  , readerSidebarStore  :: !Gtk.TreeStore
+  , readerArea          :: !Gtk.DrawingArea
+  , readerState         :: !(IORef State)
+  }
 
 -- * Mouse and button press signals to respond to input from the user. (Use
 --   widgetAddEvents to enable events you wish to receive.)
@@ -39,8 +63,8 @@ import           Mirage
 --   changes size.
 -- * The draw signal to handle redrawing the contents of the widget.
 
-buttonPressEvent :: Gtk.DrawingArea -> Gdk.EventButton -> IO Bool
-buttonPressEvent _area _eventButton = do
+buttonPressEvent :: Reader -> Gdk.EventButton -> IO Bool
+buttonPressEvent _reader _eventButton = do
 
   -- putStrLn "BUTTON PRESS EVENT"
 
@@ -74,8 +98,8 @@ buttonPressEvent _area _eventButton = do
 
   return True
 
-buttonReleaseEvent :: Gtk.DrawingArea -> Gdk.EventButton -> IO Bool
-buttonReleaseEvent _area _eventButton = do
+buttonReleaseEvent :: Reader -> Gdk.EventButton -> IO Bool
+buttonReleaseEvent _reader _eventButton = do
 
   -- putStrLn "BUTTON RELEASE EVENT"
 
@@ -109,8 +133,8 @@ buttonReleaseEvent _area _eventButton = do
 
   return True
 
-motionNotifyEvent :: Gtk.DrawingArea -> Gdk.EventMotion -> IO Bool
-motionNotifyEvent _area _eventMotion = do
+motionNotifyEvent :: Reader -> Gdk.EventMotion -> IO Bool
+motionNotifyEvent _reader _eventMotion = do
 
   -- putStrLn "BUTTON RELEASE EVENT"
 
@@ -140,30 +164,23 @@ motionNotifyEvent _area _eventMotion = do
 
   return True
 
-realize :: Gtk.DrawingArea -> IO ()
-realize _area = do
-
-
+realize :: Reader -> IO ()
+realize _reader = do
   return ()
 
-sizeAllocate :: Gtk.DrawingArea -> Gdk.Rectangle -> IO ()
-sizeAllocate _area _rectangle = do
+sizeAllocate :: Reader -> Gdk.Rectangle -> IO ()
+sizeAllocate _reader _rectangle = do
   return ()
 
-draw
-  :: IORef (Maybe (Text, Text))
-  -> IORef (Maybe Grammar)
-  -> Gtk.DrawingArea
-  -> Context
-  -> IO Bool
-draw selectedRef mayGrammarRef area ctx = do
-  r               <- #getAllocation area
+draw :: Reader -> Context -> IO Bool
+draw (Reader {..}) ctx = do
+  r               <- #getAllocation readerArea
   x               <- fromIntegral <$> get r #x
   y               <- fromIntegral <$> get r #y
   width           <- fromIntegral <$> get r #width
   height          <- fromIntegral <$> get r #height
 
-  refStyleContext <- #getStyleContext area
+  refStyleContext <- #getStyleContext readerArea
 
   Gtk.renderBackground refStyleContext ctx x y width height
 
@@ -171,12 +188,23 @@ draw selectedRef mayGrammarRef area ctx = do
     =<< #getColor refStyleContext
     =<< #getState refStyleContext
 
-  mayGrammar  <- readIORef mayGrammarRef
-  maySelected <- readIORef selectedRef
-  case (,) <$> mayGrammar <*> maySelected of
-    Nothing -> return ()
-    Just (grammar, (nont, prod)) ->
-      renderWithContext ctx (renderGrammar (width, height) grammar nont prod)
+  -- collect all enabled attributes
+  (hasNext, iter) <- #getIterFirst readerEnabledStore
+  let loop s = do
+        s' <-
+          ($ s)
+          .   maybe id Set.insert
+          <$> (fromGValue @(Maybe Text) =<< #getValue readerEnabledStore iter 0)
+        hasNext <- #iterNext readerEnabledStore iter
+        if hasNext then loop s' else return s'
+  enabled    <- if hasNext then loop mempty else return mempty
+
+  State {..} <- readIORef readerState
+  for_ ((,) <$> stateGrammar <*> stateSelected) $ \(grammar, (nont, prod)) -> do
+    renderWithContext
+      ctx
+      (renderGrammar (width, height) grammar nont prod stateHideImplicit enabled
+      )
 
   return True
 
@@ -188,8 +216,8 @@ renderWithContext :: Context -> Render a -> IO a
 renderWithContext ct r =
   withManagedPtr ct $ \p -> runReaderT (runRender r) (Cairo (castPtr p))
 
-openFile :: Gtk.TreeStore -> IORef (Maybe Grammar) -> IO ()
-openFile store mayGrammarRef = do
+openFile :: Reader -> IO ()
+openFile (Reader {..}) = do
   dialog <- new Gtk.FileChooserDialog
                 [#title := "Open File", #action := Gtk.FileChooserActionOpen]
 
@@ -205,46 +233,43 @@ openFile store mayGrammarRef = do
   res <- #run dialog
 
   case toEnum (fromIntegral res) of
-    Gtk.ResponseTypeAccept -> do
-      mayFileName <- #getFilename dialog
-      case mayFileName of
-        Nothing       -> return ()
-        Just fileName -> do
-          fileContents <- ByteString.readFile fileName
-          mayGrammar   <- either ((Nothing <$) . print)
-                                 (return . Just)
-                                 (eitherDecode fileContents)
-          case mayGrammar of
-            Nothing      -> return ()
-            Just grammar -> do
-              writeIORef mayGrammarRef (Just grammar)
+    Gtk.ResponseTypeAccept -> #getFilename dialog >>= traverse_ \fileName -> do
+      fileContents <- ByteString.readFile fileName
+      mayGrammar   <- either ((Nothing <$) . print)
+                             (return . Just)
+                             (eitherDecode fileContents)
+      for_ mayGrammar $ \grammar -> do
+        atomicModifyIORef' readerState $ \s ->
+          (s { stateGrammar = Just grammar, stateSelected = Nothing }, ())
 
-              #clear store
-              for_ (nontsAndProds grammar) $ \(nont, prods) -> do
-                nontIter <- #append store Nothing
-                #setValue store nontIter 0 =<< toGValue (Just nont)
-                for_ prods $ \prod -> do
-                  prodIter <- #append store (Just nontIter)
-                  #setValue store prodIter 0 =<< toGValue (Just prod)
-                  -- prodValue <- #getValue store prodIter 0
-                  -- mayProd <- fromGValue prodValue
-                  -- case mayProd of
-                  --   Nothing -> return ()
-                  --   Just prod -> Text.putStrLn prod
+        let StaticInfo nontsAndProds attrNames = staticInfo grammar
+
+        #clear readerSidebarStore
+        for_ nontsAndProds $ \(nont, prods) -> do
+          nontIter <- #append readerSidebarStore Nothing
+          #setValue readerSidebarStore nontIter 0 =<< toGValue (Just nont)
+          for_ prods $ \prod -> do
+            prodIter <- #append readerSidebarStore (Just nontIter)
+            #setValue readerSidebarStore prodIter 0 =<< toGValue (Just prod)
+
+        #clear readerDisabledStore
+
+        #clear readerEnabledStore
+        for_ attrNames $ \attr -> do
+          attrIter <- #append readerEnabledStore
+          #setValue readerEnabledStore attrIter 0 =<< toGValue (Just attr)
+
     _ -> return ()
 
   #destroy dialog
 
 -- https://developer.gnome.org/gtk3/stable/TreeWidget.html
-setupTree
-  :: Gtk.DrawingArea
-  -> IO (Gtk.TreeStore, Gtk.TreeView, IORef (Maybe (Text, Text)))
-setupTree area = do
-  selectedRef <- newIORef Nothing
+setupTree :: IORef State -> IO () -> IO (Gtk.TreeStore, Gtk.TreeView)
+setupTree stateRef redraw = do
 
-  store       <- Gtk.treeStoreNew [gtypeString, gtypeString]
+  store <- Gtk.treeStoreNew [gtypeString, gtypeString]
 
-  tree        <- Gtk.treeViewNewWithModel store
+  tree  <- Gtk.treeViewNewWithModel store
   #setHeadersVisible tree False
 
   renderer <- new Gtk.CellRendererText []
@@ -257,62 +282,310 @@ setupTree area = do
   #setMode select Gtk.SelectionModeSingle
   _ <- on select #changed $ do
     (isSelected, model, iter) <- #getSelected select
-    if isSelected
-      then do
-        prodValue             <- #getValue model iter 0
-        (hasParent, nontIter) <- #iterParent model iter
-        if hasParent
+    when isSelected $ do
+      prodValue             <- #getValue model iter 0
+      (hasParent, nontIter) <- #iterParent model iter
+      when hasParent $ do
+        nontValue <- #getValue model nontIter 0
+
+        mayProd   <- fromGValue @(Maybe Text) prodValue
+        mayNont   <- fromGValue @(Maybe Text) nontValue
+
+        for_ mayProd $ \prod -> for_ mayNont $ \nont -> do
+          atomicModifyIORef' stateRef
+            $ \s -> (s { stateSelected = Just (nont, prod) }, ())
+          redraw
+
+  return (store, tree)
+
+  -- Info about actions: https://wiki.gnome.org/HowDoI/GAction
+setupMenubar :: Reader -> Gtk.Application -> IO () -> IO ()
+setupMenubar reader@(Reader {..}) app redraw = do
+
+  -- open file action
+  openFileAction <- new Gio.SimpleAction [#name := "openFile"]
+  _              <- on openFileAction #activate (\_ -> openFile reader)
+  #addAction app openFileAction
+
+  -- hide implicit action
+  hideImplicitAction <- new
+    Gio.SimpleAction
+    [#name := "hideImplicit", #state :=> toGVariant False]
+  _ <- on hideImplicitAction #changeState $ traverse_ $ \v' -> do
+    #setState hideImplicitAction v'
+    fromGVariant v' >>= traverse_ \v -> do
+      atomicModifyIORef' readerState $ \s -> (s { stateHideImplicit = v }, ())
+      redraw
+  #addAction app hideImplicitAction
+
+  -- filter window action
+  filterWindowAction <- new
+    Gio.SimpleAction
+    [#name := "toggleFilterWindow", #state :=> toGVariant False]
+  _ <- on filterWindowAction #changeState $ traverse_ $ \v' -> do
+    #setState filterWindowAction v'
+    fromGVariant v'
+      >>= traverse_ \v -> (if v then #showAll else #hide) readerFilterWindow
+  #addAction app filterWindowAction
+
+  menu     <- new Gio.Menu []
+  fileMenu <- new Gio.Menu []
+  viewMenu <- new Gio.Menu []
+
+  #append fileMenu (Just "Open") (Just "app.openFile")
+
+  #freeze fileMenu
+  #appendSubmenu menu (Just "File") fileMenu
+
+  #append viewMenu (Just "Hide implicit") (Just "app.hideImplicit")
+  #append viewMenu (Just "Toggle Filter Window") (Just "app.toggleFilterWindow")
+
+  #freeze viewMenu
+  #appendSubmenu menu (Just "View") viewMenu
+
+  #freeze menu
+
+  #setMenubar app (Just menu)
+
+insert :: Text -> Gtk.ListStore -> IO ()
+insert attrName store = do
+  (canIterate, iter) <- #getIterFirst store
+  let loop = do
+        attrName' <-
+          fmap (fromMaybe "") . fromGValue @(Maybe Text) =<< #getValue store
+                                                                       iter
+                                                                       0
+
+        if (attrName' <= attrName)
           then do
-            nontValue <- #getValue model nontIter 0
+            hasNext <- #iterNext store iter
+            if hasNext then loop else return False
+          else return True
 
-            mayProd   <- fromGValue prodValue
-            mayNont   <- fromGValue nontValue
-            case (,) <$> mayProd <*> mayNont of
-              Nothing           -> return () -- "Empty selection"
-              Just (prod, nont) -> do
-                writeIORef selectedRef (Just (nont, prod))
-                #queueDraw area
-          else return () -- No parent
-      else return () -- No selection
+  canInsert <- if canIterate then loop else return False
 
-  return (store, tree, selectedRef)
+  iter <- if canInsert then #insertBefore store (Just iter) else #append store
+  #setValue store iter 0 =<< toGValue (Just attrName)
+
+  return ()
+
+toggleAttribute :: Gtk.ListStore -> Gtk.ListStore -> Gtk.TreeIter -> IO Bool
+toggleAttribute from to iter = do
+  mayAttrName <- fromGValue @(Maybe Text) =<< #getValue from iter 0
+
+  for_ mayAttrName $ \attrName -> insert attrName to
+  #remove from iter
+
+toggleAttributeTrans :: Graph -> Gtk.ListStore -> Gtk.ListStore -> Gtk.TreeIter -> IO ()
+toggleAttributeTrans graph from to iter = do
+  mayAttrName <- fromGValue @(Maybe Text) =<< #getValue from iter 0
+  for_ mayAttrName $ \attrName -> do
+
+    let closure = fold (take 2 (transitiveClosure attrName graph))
+
+    (canIterate, iter) <- #getIterFirst from
+
+    let loop = do
+          attrName' <-
+            fmap (fromMaybe "")
+            .   fromGValue @(Maybe Text)
+            =<< #getValue from iter 0
+          hasNext <- if attrName' `Set.member` closure
+            then do
+              toggleAttribute from to iter
+            else do
+              #iterNext from iter
+          if hasNext then loop else return ()
+    if canIterate then loop else return ()
+
+moveAll :: Gtk.ListStore -> Gtk.ListStore -> IO ()
+moveAll from to = do
+  (canIterate, iter) <- #getIterFirst from
+
+  let loop = do
+        hasNext <- toggleAttribute from to iter
+        when hasNext loop
+
+  when canIterate loop
+
+setupFilterWindow
+  :: IORef State -> IO () -> IO (Gtk.Window, Gtk.ListStore, Gtk.ListStore)
+setupFilterWindow stateRef redraw = do
+  filterWindow <- new Gtk.Window []
+  vBox <- new Gtk.Box [#orientation := Gtk.OrientationVertical, #spacing := 5]
+
+  -- top buttons
+
+  buttonsBox <- new Gtk.Box
+                    [#orientation := Gtk.OrientationHorizontal, #spacing := 5]
+  enableAllButton  <- new Gtk.Button [#label := "Enable All"]
+  disableAllButton <- new Gtk.Button [#label := "Disable All"]
+
+  #packStart buttonsBox disableAllButton False False 0
+  #packEnd buttonsBox enableAllButton False False 0
+
+  #packStart vBox buttonsBox False False 0
+
+  -- disabled attribute list
+  disabledStore <- Gtk.listStoreNew [gtypeString]
+
+  disabledList  <- Gtk.treeViewNewWithModel disabledStore
+  #setHeadersVisible disabledList False
+  #setActivateOnSingleClick disabledList True
+
+
+  renderer <- new Gtk.CellRendererText []
+  column   <- new Gtk.TreeViewColumn []
+  #packStart column renderer False
+  #addAttribute column renderer "text" 0
+  _      <- #appendColumn disabledList column
+
+  select <- #getSelection disabledList
+  #setMode select Gtk.SelectionModeSingle
+
+  disabledScroll <- new Gtk.ScrolledWindow
+                        [#hscrollbarPolicy := Gtk.PolicyTypeNever]
+  #add disabledScroll disabledList
+
+  -- enabled attribute list
+  enabledStore <- Gtk.listStoreNew [gtypeString]
+
+  enabledList  <- Gtk.treeViewNewWithModel enabledStore
+  #setHeadersVisible enabledList False
+  #setActivateOnSingleClick enabledList True
+
+  renderer <- new Gtk.CellRendererText []
+  column   <- new Gtk.TreeViewColumn []
+  #packStart column renderer False
+  #addAttribute column renderer "text" 0
+  _      <- #appendColumn enabledList column
+
+  select <- #getSelection enabledList
+  #setMode select Gtk.SelectionModeSingle
+
+  enabledScroll <- new Gtk.ScrolledWindow
+                       [#hscrollbarPolicy := Gtk.PolicyTypeNever]
+  #add enabledScroll enabledList
+
+  -- for_ [disabledList, enabledList] $ \list -> #setReorderable list True
+
+  _ <-
+    on enableAllButton #pressed $ moveAll disabledStore enabledStore *> redraw
+  _ <-
+    on disableAllButton #pressed $ moveAll enabledStore disabledStore *> redraw
+
+  -- horizontal box
+
+  listBox <- new
+    Gtk.Box
+    [ #orientation := Gtk.OrientationHorizontal
+    , #homogeneous := True
+    , #spacing := 5
+    ]
+
+  #packStart listBox disabledScroll True True 0
+  #packEnd listBox enabledScroll True True 0
+
+  #packStart vBox listBox True True 0
+
+  -- toggle transitive dependencies
+
+  transitiveBox <- new
+    Gtk.Box
+    [#orientation := Gtk.OrientationHorizontal, #spacing := 5]
+  transitiveSwitch <- new Gtk.Switch []
+  transitiveLabel <- new Gtk.Label [#label := "Include transitive dependencies"]
+
+  #packStart transitiveBox transitiveSwitch False False 0
+  #packStart transitiveBox transitiveLabel False False 0
+
+  #packEnd vBox transitiveBox False False 0
+
+  -- interaction
+
+  _ <- on enabledList #rowActivated $ \path _ -> do
+    (True, iter) <- #getIter enabledStore path
+    withTrans    <- #getState transitiveSwitch
+    if withTrans
+      then do
+        mayGram <- stateGrammar <$> readIORef stateRef
+        for_ mayGram $ \gram ->
+          toggleAttributeTrans (dependencyGraph gram)
+                               enabledStore
+                               disabledStore
+                               iter
+      else do
+        _ <- toggleAttribute enabledStore disabledStore iter
+        return ()
+    redraw
+  _ <- on disabledList #rowActivated $ \path _ -> do
+    (True, iter) <- #getIter disabledStore path
+    withTrans    <- #getState transitiveSwitch
+    if withTrans
+      then do
+        mayGram <- stateGrammar <$> readIORef stateRef
+        for_ mayGram $ \gram ->
+          toggleAttributeTrans (dependencyGraph gram)
+                               disabledStore
+                               enabledStore
+                               iter
+      else do
+        _ <- toggleAttribute disabledStore enabledStore iter
+        return ()
+    redraw
+
+  #add filterWindow vBox
+
+  -- TODO:
+  -- add search box
+  -- handle transitive dependency switch events
+  -- (add transitive dependency depth limit chooser)
+
+  return (filterWindow, disabledStore, enabledStore)
 
 activateApp :: Gtk.Application -> IO ()
 activateApp app = do
-  window         <- Gtk.applicationWindowNew app
+  window   <- Gtk.applicationWindowNew app
 
-  vBox           <- new Gtk.Box [#orientation := Gtk.OrientationVertical]
-  toolbar        <- new Gtk.Toolbar []
-  openFileButton <- new Gtk.ToolButton [#label := "Open File"]
-  hBox           <- new Gtk.Box [#orientation := Gtk.OrientationHorizontal]
-  area           <- new Gtk.DrawingArea []
-  scroll <- new Gtk.ScrolledWindow [#hscrollbarPolicy := Gtk.PolicyTypeNever]
+  hBox     <- new Gtk.Box [#orientation := Gtk.OrientationHorizontal]
+  area     <- new Gtk.DrawingArea []
+  scroll   <- new Gtk.ScrolledWindow [#hscrollbarPolicy := Gtk.PolicyTypeNever]
 
-  mayGrammarRef  <- newIORef Nothing
+  stateRef <- newIORef State { stateGrammar      = Nothing
+                             , stateSelected     = Nothing
+                             , stateHideImplicit = False
+                             }
 
-  #insert toolbar openFileButton 0
-  #packStart vBox toolbar False False 0
+  (filterWindow, disabledStore, enabledStore) <- setupFilterWindow
+    stateRef
+    (#queueDraw area)
 
+  (sidebarStore, tree) <- setupTree stateRef (#queueDraw area)
 
-  (store, tree, selectedRef) <- setupTree area
+  let reader = Reader { readerFilterWindow  = filterWindow
+                      , readerDisabledStore = disabledStore
+                      , readerEnabledStore  = enabledStore
+                      , readerSidebarStore  = sidebarStore
+                      , readerArea          = area
+                      , readerState         = stateRef
+                      }
+
+  setupMenubar reader app (#queueDraw area)
 
   #add scroll tree
   #packStart hBox scroll False False 0
 
-  _ <- on openFileButton #clicked (openFile store mayGrammarRef)
-
   #packStart hBox area True True 0
 
-  #packStart vBox hBox True True 0
-  #add window vBox
+  #add window hBox
 
-  _ <- on area #realize (realize area)
-  _ <- on area #sizeAllocate (sizeAllocate area)
-  _ <- on area #draw (draw selectedRef mayGrammarRef area)
+  _ <- on area #realize (realize reader)
+  _ <- on area #sizeAllocate (sizeAllocate reader)
+  _ <- on area #draw (draw reader)
 
-  _ <- on area #buttonPressEvent (buttonPressEvent area)
-  _ <- on area #buttonReleaseEvent (buttonReleaseEvent area)
-  _ <- on area #motionNotifyEvent (motionNotifyEvent area)
+  _ <- on area #buttonPressEvent (buttonPressEvent reader)
+  _ <- on area #buttonReleaseEvent (buttonReleaseEvent reader)
+  _ <- on area #motionNotifyEvent (motionNotifyEvent reader)
 
   #addEvents
     area

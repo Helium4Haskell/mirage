@@ -3,19 +3,30 @@
 module Mirage
   ( Grammar
   , renderGrammar
-  , nontsAndProds
+  , staticInfo
+  , StaticInfo(StaticInfo)
+  , transitiveClosure
+  , dependencyGraph
+  , Graph
   )
 where
 
 import           Data.Foldable                  ( traverse_ )
 import           Graphics.Rendering.Cairo       ( Render )
 import           Data.Text                      ( Text )
+import           Data.Set                       ( Set )
 
 import           Mirage.Shape
 import           Mirage.Cairo
 import           Mirage.AbstractSyntax
-import           Mirage.NontsAndProds
+import           Mirage.StaticInfo              ( staticInfo
+                                                , StaticInfo(StaticInfo)
+                                                )
 import           Mirage.RenderShapes
+import           Mirage.DependencyGraph         ( transitiveClosure
+                                                , dependencyGraph
+                                                , Graph
+                                                )
 import           Mirage.CommonTypes             ( )
 
 {-
@@ -61,8 +72,9 @@ isOrderedExample = Production
   ]
 -}
 
-renderGrammar :: (Double, Double) -> Grammar -> Text -> Text -> Render ()
-renderGrammar bb gram nont prod = do
+renderGrammar
+  :: (Double, Double) -> Grammar -> Text -> Text -> Bool -> Set Text -> Render ()
+renderGrammar bb gram nont prod hideImplicit enabled = do
   let nodeFont = FontOptions 13 "sans" FontWeightBold
   nodeFontExtents <- mirageFontExtents nodeFont
   let attrFont = FontOptions 13 "sans" FontWeightNormal
@@ -78,6 +90,8 @@ renderGrammar bb gram nont prod = do
                              bb
                              nont
                              prod
+                             hideImplicit
+                             enabled
                              gram
 
   traverse_ renderShape shapes

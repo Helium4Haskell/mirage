@@ -1,13 +1,30 @@
-optpragmas
-{
+optpragmas {
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric, DeriveAnyClass #-}
 }
 
+module {Mirage.AbstractSyntax}
+{ Grammar (Grammar)
+, Nonterminals
+, Nonterminal (Nonterminal)
+, Attributes
+, Attribute (Attribute)
+, Productions
+, Production (Production)
+, Children
+, Child (Child)
+, Rules
+, Rule (Rule)
+, Node (Node)
+, Connections
+, Connection (Connection)
+, LocalsRows
+, Locals
+}{}
+
 imports {
 import           Data.Text                      ( Text )
 
-import           Mirage.Shape
 import           Mirage.CommonTypes
 
 import           Data.Aeson                     ( FromJSON )
@@ -47,10 +64,10 @@ data Rule
   | Rule         targets     :: {[Address]}
                  sources     :: {[Address]}
                  explicit    :: Bool
+                 origin      :: String
                  definition  :: Text
 
-deriving Grammar Nonterminal Attribute Production Child Rule
-  : FromJSON, Generic, Show
+deriving * : FromJSON, Generic, Show
 
 -- This belongs to RenderShapes.ag
 
@@ -66,5 +83,6 @@ data Connection
 
 deriving Connection : Eq, Ord
 
+type LocalsRows   = [Locals]
 type Locals       = [Text]
 type Connections  = [Connection]

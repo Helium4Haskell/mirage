@@ -9,8 +9,10 @@ extra-source-files:
   CHANGELOG.md
   uuagc_options
   src/Mirage/RenderShapes.ag
-  src/Mirage/NontsAndProds.ag
+  src/Mirage/StaticInfo.ag
   src/Mirage/AbstractSyntax.ag
+  src/Mirage/MirageTest.ag
+  src/Mirage/DependencyGraph.ag
 
 custom-setup
   setup-depends:
@@ -25,20 +27,22 @@ library
     Mirage.AbstractSyntax
     Mirage.Cairo
     Mirage.CommonTypes
-    Mirage.NontsAndProds
+    Mirage.DependencyGraph
     Mirage.RenderShapes
     Mirage.Shape
+    Mirage.StaticInfo
 
   hs-source-dirs:   src
   default-language: Haskell2010
   ghc-options:      -Wall
   build-depends:
       aeson
-    , base          >=4.13 && <4.15
-    , cairo         ^>=0.13
-    , containers    ^>=0.6
+    , base                 >=4.13 && <4.15
+    , cairo                ^>=0.13
+    , containers           ^>=0.6
+    , monoidal-containers  ^>=0.6
     , mtl
-    , text          ^>=1.2
+    , text                 ^>=1.2
     , transformers
 
 executable mirage
