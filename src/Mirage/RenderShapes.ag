@@ -6,7 +6,19 @@ optpragmas
 {-# LANGUAGE OverloadedStrings #-}
 }
 
-module {Mirage.RenderShapes} {grammarShapes, askCairo}
+module {Mirage.RenderShapes}
+{ grammarShapes
+, askCairo
+, AttrInfo (TargetInfo, SourceInfo)
+, targetInfoType
+, targetInfoCode
+, targetInfoOrigin
+, sourceInfoType
+, BBForest
+, lookupBBForest
+}{}
+
+imports
 {
 import           Data.Text                      ( Text )
 import           Data.Map                       ( Map )
@@ -29,6 +41,7 @@ import           Control.Arrow                  ( first
                                                 , second
                                                 )
 import           Data.Monoid                    ( Sum )
+import           Control.Applicative            ( Alternative((<|>), empty) )
 }
 
 attr Production Productions
@@ -268,9 +281,9 @@ attr Connections Connection
   inh targets :: {Map Address (Double, Double)}
 
 sem Attributes
-  | Nil lhs.bb = (0, 0)
+  | Nil loc.bb = (0, 0)
   | Cons
-      lhs.bb = (@loc.w, @loc.h)
+      loc.bb = (@loc.w, @loc.h)
       loc.(w, h) = ( max (fst @tl.bb) (fst @hd.bb + snd @tl.bb)
                    , snd @tl.bb + snd @hd.bb
                    )
@@ -291,22 +304,22 @@ sem Attributes
 
 sem Attribute
   | Attribute
-      lhs.bb = (@loc.w + 1.5 * @loc.h, @loc.h)
+      loc.bb = (@loc.w + 1.5 * @loc.h, @loc.h)
       loc.h = fontExtentsHeight @lhs.attrFontExtents
       (TextExtents loc.w) = textExtents @lhs.cairo @lhs.attrFont @name
-      loc.isSource = (@lhs.location == SideLeft)
+      loc.isTarget = (@lhs.location == SideRight)
                        == (@lhs.role == NodeRoleParent)
       loc.addPort = Map.insert (Address @lhs.fieldName @name) (@loc.x, @loc.y)
-     +sources = if @loc.isSource then @loc.addPort else id
-     +targets = if @loc.isSource then id else @loc.addPort
+     +sources = if @loc.isTarget then id else @loc.addPort
+     +targets = if @loc.isTarget then @loc.addPort else id
       loc.x = fst @lhs.pos + if @lhs.location == SideLeft
                                then 0.5 * @loc.h
                                else @loc.w + @loc.h 
       loc.y = snd @lhs.pos - @loc.h / 2
      +shapes
-       = ([ Disk (if @loc.isSource
-                    then RGB 1 (2 / 5) 0
-                    else RGB 0 (2 / 3) (3 / 4))
+       = ([ Disk (if @loc.isTarget
+                    then RGB 0 (2 / 3) (3 / 4)
+                    else RGB 1 (2 / 5) 0)
                  (@loc.x, @loc.y) 
                  (0.45 * @loc.h)
           , Text ( @loc.x + if @lhs.location == SideLeft
@@ -327,7 +340,7 @@ sem Node
       loc.ahgt = fontExtentsHeight @lhs.attrFontExtents
       loc.nhgt = fontExtentsHeight @lhs.nodeFontExtents
       (TextExtents loc.w) = textExtents @lhs.cairo @lhs.nodeFont @name
-      lhs.bb = (@loc.bb_w, @loc.bb_h)
+      loc.bb = (@loc.bb_w, @loc.bb_h)
       (loc.bb_w, loc.bb_h)
         = let (xi, yi) = @inhs.bb
               (xs, ys) = @syns.bb
@@ -513,18 +526,105 @@ grammarShapes
   -> Bool     -- ^ hide implicit attributes
   -> Set Text -- ^ enabled attributes
   -> Grammar
-  -> [Shape]
-grammarShapes cairo nodeFont nodeFontExtents attrFont attrFontExtents bb nont prod hideImplicit enabled gram =
-  shapes_Syn_Grammar $ wrap_Grammar (sem_Grammar gram) Inh_Grammar
-    { cairo_Inh_Grammar           = cairo
-    , nodeFont_Inh_Grammar        = nodeFont
-    , nodeFontExtents_Inh_Grammar = nodeFontExtents
-    , attrFont_Inh_Grammar        = attrFont
-    , attrFontExtents_Inh_Grammar = attrFontExtents
-    , allocation_Inh_Grammar      = bb
-    , chosenNont_Inh_Grammar      = nont
-    , chosenProd_Inh_Grammar      = prod
-    , hideImplicit_Inh_Grammar    = hideImplicit
-    , enabledAttrs_Inh_Grammar    = enabled
+  -> ([Shape], BBForest AttrInfo)
+grammarShapes cairo nodeFont nodeFontExtents attrFont attrFontExtents bb nont prod hideImplicit enabled gram
+  = (shapes_Syn_Grammar wrapped, bbForest_Syn_Grammar wrapped)
+ where
+  wrapped = wrap_Grammar
+    (sem_Grammar gram)
+    Inh_Grammar { cairo_Inh_Grammar           = cairo
+                , nodeFont_Inh_Grammar        = nodeFont
+                , nodeFontExtents_Inh_Grammar = nodeFontExtents
+                , attrFont_Inh_Grammar        = attrFont
+                , attrFontExtents_Inh_Grammar = attrFontExtents
+                , allocation_Inh_Grammar      = bb
+                , chosenNont_Inh_Grammar      = nont
+                , chosenProd_Inh_Grammar      = prod
+                , hideImplicit_Inh_Grammar    = hideImplicit
+                , enabledAttrs_Inh_Grammar    = enabled
+                }
+}
+
+-- Construct a bounding box tree to handle tooltip queries
+
+attr BBTree BBForest
+  inh queryPos :: {(Double, Double)}
+  syn queryRes use {<|>} {empty} :: {Maybe a}
+
+sem BBTree
+  | BBNode +queryRes = if isInside @lhs.queryPos @bbPos @bbSize
+                         then id
+                         else const Nothing
+  | BBLeaf lhs.queryRes = if isInside @lhs.queryPos @bbPos @bbSize
+                            then Just @value
+                            else Nothing
+
+{
+isInside :: (Double, Double) -> (Double, Double) -> (Double, Double) -> Bool
+isInside (x1, y1) (x2, y2) (dx, dy) =
+  (x2 <= x1 && x1 <= x2 + dx) && (y2 >= y1 && y1 >= y2 - dy)
+
+lookupBBForest :: (Double, Double) -> BBForest a -> Maybe a
+lookupBBForest point forest = queryRes_Syn_BBForest
+  (wrap_BBForest (sem_BBForest forest)
+                 Inh_BBForest { queryPos_Inh_BBForest = point }
+  )
+
+data AttrInfo
+  = TargetInfo
+    { targetInfoType   :: Type
+    , targetInfoCode   :: Text
+    , targetInfoOrigin :: Text
+    }
+  | SourceInfo
+    { sourceInfoType :: Type
     }
 }
+
+attr Rules Rule
+  syn targetInfoMap use {<>} {mempty} :: {Map Address (Text, Text)}
+
+sem Production
+  | Production
+      children.targetInfoMap = @rules.targetInfoMap
+      parent.targetInfoMap = @rules.targetInfoMap
+
+sem Rule
+  | Rule lhs.targetInfoMap
+           = Map.fromList [(x, (@definition, @origin)) | x <- @targets]
+
+attr Children Child Node Attributes Attribute
+  inh targetInfoMap :: {Map Address (Text, Text)}
+
+attr Grammar Nonterminals Nonterminal Productions Production Child Children
+     LocalsRows Locals Connections Connection Attribute Attributes Node
+  syn bbForest use {++} {[]} :: {BBForest AttrInfo}
+
+sem Node
+  | Node +bbForest = (: []) . BBNode @lhs.pos @loc.bb 
+
+sem Attribute
+  | Attribute
+      loc.targetInfo = @lhs.targetInfoMap Map.!? Address @lhs.fieldName @name
+      loc.attrInfo
+        = case @loc.targetInfo of
+            Just (code, origin) | @loc.isTarget -> TargetInfo @tp code origin
+            _ -> SourceInfo @tp
+      lhs.bbForest
+        = [ BBLeaf @lhs.pos
+                   @loc.bb
+                   @loc.attrInfo
+          ]
+
+-- Only compute bbForest for chosen nonterminal and production 
+
+sem Nonterminal
+  | Nonterminal lhs.bbForest
+      = if @name == @lhs.chosenNont then @prods.bbForest else []
+
+sem Production
+  | Production lhs.bbForest
+      = if @name == @lhs.chosenProd
+          then @children.bbForest ++ @parent.bbForest
+          else []
+

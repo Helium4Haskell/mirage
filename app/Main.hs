@@ -26,13 +26,17 @@ import           Data.Aeson                     ( eitherDecode )
 import qualified Data.ByteString.Lazy          as ByteString
 
 import           Data.Text                      ( Text )
+import qualified Data.Text                     as Text
+import qualified Data.Text.IO                  as Text
 
 import           Data.IORef
 import           Data.Foldable                  ( for_
                                                 , traverse_
                                                 , fold
                                                 )
-import           Control.Monad                  ( when )
+import           Control.Monad                  ( when
+                                                , (>=>)
+                                                )
 import           Data.Maybe                     ( fromMaybe )
 import qualified Data.Set                      as Set
 import           Data.Traversable               ( for )
@@ -43,10 +47,13 @@ data State = State
   { stateGrammar      :: !(Maybe Grammar)
   , stateSelected     :: !(Maybe (Text, Text))
   , stateHideImplicit :: !Bool
+  , stateBBForest     :: !(Maybe (BBForest AttrInfo))
   }
 
 data Reader = Reader
   { readerFilterWindow  :: !Gtk.Window
+  , readerCodeWindow    :: !Gtk.Window
+  , readerCodeBuffer    :: !Gtk.TextBuffer
   , readerDisabledStore :: !Gtk.ListStore
   , readerEnabledStore  :: !Gtk.ListStore
   , readerSidebarStore  :: !Gtk.TreeStore
@@ -64,7 +71,7 @@ data Reader = Reader
 -- * The draw signal to handle redrawing the contents of the widget.
 
 buttonPressEvent :: Reader -> Gdk.EventButton -> IO Bool
-buttonPressEvent _reader _eventButton = do
+buttonPressEvent (Reader {..}) eventButton = do
 
   -- putStrLn "BUTTON PRESS EVENT"
 
@@ -76,9 +83,9 @@ buttonPressEvent _reader _eventButton = do
   -- time      <- get eventButton #time
   -- type'     <- get eventButton #type
   -- -- window    <- get eventButton #window
-  -- x         <- get eventButton #x
+  x <- get eventButton #x
   -- xRoot     <- get eventButton #xRoot
-  -- y         <- get eventButton #y
+  y <- get eventButton #y
   -- yRoot     <- get eventButton #yRoot
 
   -- print ("axes", axes)
@@ -96,7 +103,20 @@ buttonPressEvent _reader _eventButton = do
 
   -- putStrLn ""
 
+  traverse_
+      ( traverse_ (populateCode readerCodeWindow readerCodeBuffer)
+      . lookupBBForest (x, y)
+      )
+    .   stateBBForest
+    =<< readIORef readerState
+
   return True
+
+populateCode :: Gtk.Window -> Gtk.TextBuffer -> AttrInfo -> IO ()
+populateCode window buffer (TargetInfo tp code origin) = do
+  set buffer [#text := code]
+  #showAll window
+populateCode _ _ (SourceInfo _) = return ()
 
 buttonReleaseEvent :: Reader -> Gdk.EventButton -> IO Bool
 buttonReleaseEvent _reader _eventButton = do
@@ -200,11 +220,13 @@ draw (Reader {..}) ctx = do
   enabled    <- if hasNext then loop mempty else return mempty
 
   State {..} <- readIORef readerState
-  for_ ((,) <$> stateGrammar <*> stateSelected) $ \(grammar, (nont, prod)) -> do
-    renderWithContext
+  for ((,) <$> stateGrammar <*> stateSelected) $ \(grammar, (nont, prod)) -> do
+    bbForest <- renderWithContext
       ctx
       (renderGrammar (width, height) grammar nont prod stateHideImplicit enabled
       )
+    atomicModifyIORef' readerState
+      $ \s -> (s { stateBBForest = Just bbForest }, ())
 
   return True
 
@@ -322,11 +344,16 @@ setupMenubar reader@(Reader {..}) app redraw = do
   filterWindowAction <- new
     Gio.SimpleAction
     [#name := "toggleFilterWindow", #state :=> toGVariant False]
-  _ <- on filterWindowAction #changeState $ traverse_ $ \v' -> do
-    #setState filterWindowAction v'
-    fromGVariant v'
-      >>= traverse_ \v -> (if v then #showAll else #hide) readerFilterWindow
+  _ <-
+    on filterWindowAction #changeState
+    $   traverse_
+    $   fromGVariant
+    >=> traverse_ \v -> (if v then #showAll else #hide) readerFilterWindow
   #addAction app filterWindowAction
+  on readerFilterWindow #hide
+    $ set filterWindowAction [#state :=> toGVariant False]
+  on readerFilterWindow #show
+    $ set filterWindowAction [#state :=> toGVariant True]
 
   menu     <- new Gio.Menu []
   fileMenu <- new Gio.Menu []
@@ -376,7 +403,8 @@ toggleAttribute from to iter = do
   for_ mayAttrName $ \attrName -> insert attrName to
   #remove from iter
 
-toggleAttributeTrans :: Graph -> Gtk.ListStore -> Gtk.ListStore -> Gtk.TreeIter -> IO ()
+toggleAttributeTrans
+  :: Graph -> Gtk.ListStore -> Gtk.ListStore -> Gtk.TreeIter -> IO ()
 toggleAttributeTrans graph from to iter = do
   mayAttrName <- fromGValue @(Maybe Text) =<< #getValue from iter 0
   for_ mayAttrName $ \attrName -> do
@@ -387,9 +415,9 @@ toggleAttributeTrans graph from to iter = do
 
     let loop = do
           attrName' <-
-            fmap (fromMaybe "")
-            .   fromGValue @(Maybe Text)
-            =<< #getValue from iter 0
+            fmap (fromMaybe "") . fromGValue @(Maybe Text) =<< #getValue from
+                                                                         iter
+                                                                         0
           hasNext <- if attrName' `Set.member` closure
             then do
               toggleAttribute from to iter
@@ -411,7 +439,7 @@ moveAll from to = do
 setupFilterWindow
   :: IORef State -> IO () -> IO (Gtk.Window, Gtk.ListStore, Gtk.ListStore)
 setupFilterWindow stateRef redraw = do
-  filterWindow <- new Gtk.Window []
+  filterWindow <- new Gtk.Window [#typeHint := Gdk.WindowTypeHintDialog]
   vBox <- new Gtk.Box [#orientation := Gtk.OrientationVertical, #spacing := 5]
 
   -- top buttons
@@ -509,11 +537,10 @@ setupFilterWindow stateRef redraw = do
     if withTrans
       then do
         mayGram <- stateGrammar <$> readIORef stateRef
-        for_ mayGram $ \gram ->
-          toggleAttributeTrans (dependencyGraph gram)
-                               enabledStore
-                               disabledStore
-                               iter
+        for_ mayGram $ \gram -> toggleAttributeTrans (dependencyGraph gram)
+                                                     enabledStore
+                                                     disabledStore
+                                                     iter
       else do
         _ <- toggleAttribute enabledStore disabledStore iter
         return ()
@@ -524,45 +551,75 @@ setupFilterWindow stateRef redraw = do
     if withTrans
       then do
         mayGram <- stateGrammar <$> readIORef stateRef
-        for_ mayGram $ \gram ->
-          toggleAttributeTrans (dependencyGraph gram)
-                               disabledStore
-                               enabledStore
-                               iter
+        for_ mayGram $ \gram -> toggleAttributeTrans (dependencyGraph gram)
+                                                     disabledStore
+                                                     enabledStore
+                                                     iter
       else do
         _ <- toggleAttribute disabledStore enabledStore iter
         return ()
     redraw
 
+  on filterWindow #deleteEvent $ \_ -> #hideOnDelete filterWindow
+
   #add filterWindow vBox
 
-  -- TODO:
-  -- add search box
-  -- handle transitive dependency switch events
-  -- (add transitive dependency depth limit chooser)
-
   return (filterWindow, disabledStore, enabledStore)
+
+queryTooltip :: IORef State -> Double -> Double -> Gtk.Tooltip -> IO Bool
+queryTooltip stateRef x y ttip = do
+  mayBBForest <- stateBBForest <$> readIORef stateRef
+  fromMaybe (return False) $ do
+    bbForest <- mayBBForest
+    attrInfo <- lookupBBForest (x, y) bbForest
+    return $ do
+      -- Text.putStrLn origin
+      #setText ttip $ Just $ Text.strip $ Text.unlines $ case attrInfo of
+        TargetInfo tp code origin ->
+          [": " <> Text.strip (prettyType tp), origin]
+        SourceInfo tp -> [" : " <> prettyType tp]
+
+      return True
+
+setupCodeWindow :: IO (Gtk.Window, Gtk.TextBuffer)
+setupCodeWindow = do
+  window   <- new Gtk.Window [#typeHint := Gdk.WindowTypeHintDialog]
+
+  textView <- new Gtk.TextView []
+
+  #add window textView
+
+  on window #deleteEvent (\_ -> #hideOnDelete window)
+
+  buffer <- get textView #buffer
+
+  return (window, buffer)
 
 activateApp :: Gtk.Application -> IO ()
 activateApp app = do
   window   <- Gtk.applicationWindowNew app
 
   hBox     <- new Gtk.Box [#orientation := Gtk.OrientationHorizontal]
-  area     <- new Gtk.DrawingArea []
+  area     <- new Gtk.DrawingArea [#hasTooltip := True]
   scroll   <- new Gtk.ScrolledWindow [#hscrollbarPolicy := Gtk.PolicyTypeNever]
 
   stateRef <- newIORef State { stateGrammar      = Nothing
                              , stateSelected     = Nothing
                              , stateHideImplicit = False
+                             , stateBBForest     = Nothing
                              }
 
   (filterWindow, disabledStore, enabledStore) <- setupFilterWindow
     stateRef
     (#queueDraw area)
 
-  (sidebarStore, tree) <- setupTree stateRef (#queueDraw area)
+  (codeWindow  , codeBuffer) <- setupCodeWindow
+
+  (sidebarStore, tree      ) <- setupTree stateRef (#queueDraw area)
 
   let reader = Reader { readerFilterWindow  = filterWindow
+                      , readerCodeWindow    = codeWindow
+                      , readerCodeBuffer    = codeBuffer
                       , readerDisabledStore = disabledStore
                       , readerEnabledStore  = enabledStore
                       , readerSidebarStore  = sidebarStore
@@ -578,6 +635,9 @@ activateApp app = do
   #packStart hBox area True True 0
 
   #add window hBox
+
+  _ <- on area #queryTooltip $ \x y _kbMode ttip ->
+    queryTooltip stateRef (fromIntegral x) (fromIntegral y) ttip
 
   _ <- on area #realize (realize reader)
   _ <- on area #sizeAllocate (sizeAllocate reader)

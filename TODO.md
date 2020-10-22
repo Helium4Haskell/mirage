@@ -13,9 +13,8 @@ Questions:
 
 Bugs:
 
-  * [ ] Fix local attribute arrangement "ioMatch"
-  * [ ] Fix double displacement of local attributes
-  * [ ] Hide filter window instead of closing
+  * Fix local attribute arrangement "ioMatch"
+  * Fix double displacement of local attributes
 
 Short term:
 
@@ -30,28 +29,30 @@ Short term:
   * [x] Layout local attributes:
     * [x] Move downward attributes to the left side
     * [x] Multiple layers of local variables
-  * [x] Filtering the display attributes
+  * [x] Filtering the display attributes:
     * [x] Hide copy rules only visually (Transitive closure should still include the copy rule dependencies)
     * [x] Popup window that can stay open besides main window.
     * [x] Global list of attributes and not per production. Maybe grouped into projects.
     * [x] Transitive dependencies toggle button
-    * [ ] "Selected production only"
-    * [ ] Search bar at top of filter window
-  * [ ] Events:
-    * [ ] Hover over attributes to see implementation and source location
-    * [ ] Drag background to pan
-    * [ ] Drag local variables
-    * [ ] Flip local attributes (with right-click maybe?)
-  * [ ] Improve bezier curves
+  * [x] Attributes interaction:
+    * [x] For blue attributes, show type and location
+    * [x] For orange attributes, show only the type
+    * [x] Open window for source code (when clicked) and refresh contents
   * [ ] Flip left local attributes
-  * [ ] Expand all + search box for the side panel
+  * [ ] Filter window extras:
+    * [ ] "Selected production only"
+    * [ ] Transitive dependencies depth slider
+  * [ ] Drag background to pan
+  * [ ] Improve bezier curves
   * [ ] Add arrow heads to indicate direction (make blue disks into triangles)
   * [ ] Better vertical alignment of trapezoids (currently, they are centered)
-  * [ ] Search in sidebar (is already present, but not satisfactory)
   * [ ] Don't show node self disks (maybe also for locals) if they're not used
 
 Long term:
 
+  * [ ] Expand/collapse all for the side bar
+  * [ ] Search in side bar (is already present, but not satisfactory)
+  * [ ] Search bar at top of filter window
   * [ ] In filter window highlight on hover and also highlight transitive dependencies if enabled
   * [ ] Hide locals if they are not used (with fixed point iteration)
   * [ ] Project files (open file / add file) save filters
@@ -61,3 +62,5 @@ Long term:
   * [ ] Limit maximum number of visable attributes so that trapezoids never overlap
   * [ ] Indirect dependency analysis
   * [ ] Open multiple files at the same time (workaround: include all in one .ag file)
+  * [ ] Drag local attributes
+    * [ ] Flip local attributes (with right-click maybe?)
