@@ -11,7 +11,6 @@ extra-source-files:
   src/Mirage/RenderShapes.ag
   src/Mirage/StaticInfo.ag
   src/Mirage/AbstractSyntax.ag
-  src/Mirage/MirageTest.ag
   src/Mirage/DependencyGraph.ag
 
 custom-setup

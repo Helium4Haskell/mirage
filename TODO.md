@@ -14,7 +14,6 @@ Questions:
 Bugs:
 
   * Fix local attribute arrangement "ioMatch"
-  * Fix double displacement of local attributes
 
 Short term:
 
@@ -38,7 +37,7 @@ Short term:
     * [x] For blue attributes, show type and location
     * [x] For orange attributes, show only the type
     * [x] Open window for source code (when clicked) and refresh contents
-  * [ ] Flip left local attributes
+  * [x] Flip left local attributes
   * [ ] Filter window extras:
     * [ ] "Selected production only"
     * [ ] Transitive dependencies depth slider
@@ -46,7 +45,7 @@ Short term:
   * [ ] Improve bezier curves
   * [ ] Add arrow heads to indicate direction (make blue disks into triangles)
   * [ ] Better vertical alignment of trapezoids (currently, they are centered)
-  * [ ] Don't show node self disks (maybe also for locals) if they're not used
+  * [ ] Show node self disks (maybe also for locals) if they're used
 
 Long term:
 

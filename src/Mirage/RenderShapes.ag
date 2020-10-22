@@ -199,7 +199,8 @@ sem Rule
           ]
           
 {
-data Side = SideLeft | SideRight deriving Eq
+data HorizontalSide = SideLeft | SideRight deriving Eq
+data VerticalSide = SideTop | SideBottom deriving Eq
 
 data NodeRole = NodeRoleParent | NodeRoleChild deriving Eq
 
@@ -245,8 +246,8 @@ attr Child Children LocalsRows Locals Attribute Attributes Node
   inh pos :: {(Double, Double)}
 
   -- used for drawing the lines between the nodes
-  syn sources use {<>} {mempty} :: {Map Address (Double, Double)}
-  syn targets use {<>} {mempty} :: {Map Address (Double, Double)}
+  syn sources use {<>} {mempty} :: {Map Address (VerticalSide, (Double, Double))}
+  syn targets use {<>} {mempty} :: {Map Address (VerticalSide, (Double, Double))}
 
 attr Grammar Nonterminals Nonterminal Productions Production Child Children
      LocalsRows Locals Connections Connection Attribute Attributes Node
@@ -263,9 +264,8 @@ attr Grammar Nonterminals Nonterminal Productions Production Children Child
   inh enabledAttrs :: {Set Text}
 
 attr Attribute Attributes
-  inh location :: Side
+  inh location :: HorizontalSide
   inh fieldName :: Text
-  -- syn n use {+} {0} :: Int
 
 attr Attribute Attributes Node Child Children
   inh role :: {NodeRole}
@@ -277,8 +277,8 @@ sem Production
   | Production lhs.shapes = if @name == @lhs.chosenProd then @loc.shapes else []
 
 attr Connections Connection
-  inh sources :: {Map Address (Double, Double)}
-  inh targets :: {Map Address (Double, Double)}
+  inh sources :: {Map Address (VerticalSide, (Double, Double))}
+  inh targets :: {Map Address (VerticalSide, (Double, Double))}
 
 sem Attributes
   | Nil loc.bb = (0, 0)
@@ -309,7 +309,7 @@ sem Attribute
       (TextExtents loc.w) = textExtents @lhs.cairo @lhs.attrFont @name
       loc.isTarget = (@lhs.location == SideRight)
                        == (@lhs.role == NodeRoleParent)
-      loc.addPort = Map.insert (Address @lhs.fieldName @name) (@loc.x, @loc.y)
+      loc.addPort = Map.insert (Address @lhs.fieldName @name) (if @lhs.role == NodeRoleParent then SideBottom else SideTop, (@loc.x, @loc.y))
      +sources = if @loc.isTarget then id else @loc.addPort
      +targets = if @loc.isTarget then @loc.addPort else id
       loc.x = fst @lhs.pos + if @lhs.location == SideLeft
@@ -347,7 +347,7 @@ sem Node
           in ( max @loc.w (abs (yi - ys) + max @loc.ahgt (xi + xs) + @loc.ahgt)
              , @loc.nhgt + max yi ys + if @loc.hasSource then @loc.ahgt else 0
              )
-      loc.hasSource = @lhs.role == NodeRoleChild
+      loc.hasSource = False -- @lhs.role == NodeRoleChild
       inhs.pos
         = let (x, y) = @lhs.pos
           in ( x + max 0 (snd @syns.bb - snd @inhs.bb)
@@ -364,8 +364,19 @@ sem Node
              )
       loc.fieldName = @name
       (inhs.location, syns.location) = (SideLeft, SideRight)
-      loc.portPos = (fst @lhs.pos + @loc.bb_w / 2, snd @lhs.pos - @loc.bb_h + @loc.ahgt / 2)
-      +sources = if @loc.hasSource then Map.insert (Address "loc" @name) @loc.portPos else id
+      loc.portPos
+        = ( fst @lhs.pos + @loc.bb_w / 2
+          , snd @lhs.pos - @loc.bb_h + @loc.ahgt / 2
+          )
+      +sources
+        = if @loc.hasSource
+            then Map.insert (Address "loc" @name)
+                            ( if @lhs.role == NodeRoleParent
+                                then SideBottom
+                                else SideTop
+                            , @loc.portPos
+                            )
+            else id
       +shapes
         = let (x, y) = @lhs.pos
           in (([ PolyLine
@@ -407,8 +418,8 @@ sem Children
                    (xs, ys) = @tl.bb
                in (x + 20 + xs, max y ys)
 
-attr LocalsRows
-  inh side :: Side
+attr LocalsRows Locals
+  inh side :: HorizontalSide
 
 sem LocalsRows
   | Nil lhs.bb = (0, 0)
@@ -420,7 +431,7 @@ sem LocalsRows
           in  (max w1 w2, h2 + if h1 > 0 then h1 + 0.1 * h3 else 0)
       hd.pos
         = let ~(x, y) = @lhs.pos
-          in ( x - if @lhs.side == SideRight then 0 else fst @hd.bb
+          in ( x
              , y - (snd @tl.bb + if snd @tl.bb > 0 then 0.1 * snd @lhs.allocation else 0)
              )
       tl.pos
@@ -435,15 +446,33 @@ sem Locals
       loc.nhgt = fontExtentsHeight @lhs.nodeFontExtents
       loc.ahgt = fontExtentsHeight @lhs.attrFontExtents
       (TextExtents loc.w) = textExtents @lhs.cairo @lhs.nodeFont @hd
-      lhs.bb = (@loc.bb_w + fst @tl.bb, max @loc.bb_h (snd @tl.bb))
+      loc.bb = ( @loc.bb_w + if fst @tl.bb > 0 then fst @tl.bb + 20 else 0
+               , max @loc.bb_h (snd @tl.bb)
+               )
       loc.bb_w = @loc.w + @loc.ahgt
       loc.bb_h = 2 * @loc.ahgt + @loc.nhgt
       tl.pos = let ~(x, y) = @lhs.pos in (x + @loc.bb_w + 20, y)
-      loc.sourcePos = let ~(x, y) = @lhs.pos in (x + @loc.bb_w / 2, y - @loc.bb_h + @loc.ahgt)
-      loc.targetPos = let ~(x, y) = @lhs.pos in (x + @loc.bb_w / 2, y)
+      loc.sourcePos
+        = let ~(x, y) = @lhs.pos
+          in  ( x + @loc.bb_w / 2
+              , y - if @lhs.side == SideRight then @loc.bb_h - @loc.ahgt else 0
+              )
+      loc.targetPos
+        = let ~(x, y) = @lhs.pos
+          in  ( x + @loc.bb_w / 2
+              , y - if @lhs.side == SideLeft then @loc.bb_h - @loc.ahgt else 0
+              )
       loc.insertLoc = Map.insert (Address "loc" @hd)
-      +sources = @loc.insertLoc @loc.sourcePos
-      +targets = @loc.insertLoc @loc.targetPos
+      +sources = @loc.insertLoc ( if @lhs.side == SideRight
+                                    then SideTop
+                                    else SideBottom
+                                , @loc.sourcePos
+                                )
+      +targets = @loc.insertLoc ( if @lhs.side == SideRight
+                                    then SideBottom
+                                    else SideTop
+                                , @loc.targetPos
+                                )
       +shapes
         = let ~(x, y) = @lhs.pos
           in ([ PolyLine (x + @loc.ahgt / 2,y)
@@ -485,10 +514,22 @@ sem Production
               ~(pw, _ph) = @parent.bb
           in  (@loc.w / 2 + pw / 2, @loc.h / 2 + lh / 2)
       -- connections.bb = @lhs.allocation
-      connections.sources = @leftLocalsRows.sources <> @rightLocalsRows.sources <> @children.sources <> @parent.sources
-      connections.targets = @leftLocalsRows.targets <> @rightLocalsRows.targets <> @children.targets <> @parent.targets
-      loc.shapes = @connections.shapes <> @leftLocalsRows.shapes <> @rightLocalsRows.shapes <> @children.shapes <> @parent.shapes
-
+      connections.sources = mconcat [ @leftLocalsRows.sources
+                                    , @rightLocalsRows.sources
+                                    , @children.sources
+                                    , @parent.sources
+                                    ]
+      connections.targets = mconcat [ @leftLocalsRows.targets
+                                    , @rightLocalsRows.targets
+                                    , @children.targets
+                                    , @parent.targets
+                                    ]
+      loc.shapes = mconcat [ @connections.shapes
+                           , @leftLocalsRows.shapes
+                           , @rightLocalsRows.shapes
+                           , @children.shapes
+                           , @parent.shapes
+                           ]
       leftLocalsRows.side = SideLeft
       rightLocalsRows.side = SideRight
 
@@ -496,17 +537,17 @@ sem Connection
   | Connection
       +shapes = case (,) <$> Map.lookup @source @lhs.sources <*> Map.lookup @target @lhs.targets of
                   Nothing -> id
-                  Just ((x,y),(x',y')) -> 
+                  Just ((s,(x,y)),(s',(x',y'))) -> 
                     ([ Bezier
                        (RGBA 0 0 0 (if @explicit then 1 else 0.2))
                        (x, y)
                        ( x
-                       , if addressField @source == "lhs"
+                       , if s == SideBottom
                          then y + 0.2 * snd @lhs.allocation
                          else y - 0.2 * snd @lhs.allocation
                        )
                        ( x'
-                       , if addressField @target `elem` ["lhs", "loc"]
+                       , if s' == SideBottom
                          then y' + 0.2 * snd @lhs.allocation
                          else y' - 0.2 * snd @lhs.allocation
                        )
@@ -588,12 +629,14 @@ sem Production
   | Production
       children.targetInfoMap = @rules.targetInfoMap
       parent.targetInfoMap = @rules.targetInfoMap
+      leftLocalsRows.targetInfoMap = @rules.targetInfoMap
+      rightLocalsRows.targetInfoMap = @rules.targetInfoMap
 
 sem Rule
   | Rule lhs.targetInfoMap
            = Map.fromList [(x, (@definition, @origin)) | x <- @targets]
 
-attr Children Child Node Attributes Attribute
+attr LocalsRows Locals Children Child Node Attributes Attribute
   inh targetInfoMap :: {Map Address (Text, Text)}
 
 attr Grammar Nonterminals Nonterminal Productions Production Child Children
@@ -610,11 +653,17 @@ sem Attribute
         = case @loc.targetInfo of
             Just (code, origin) | @loc.isTarget -> TargetInfo @tp code origin
             _ -> SourceInfo @tp
-      lhs.bbForest
-        = [ BBLeaf @lhs.pos
-                   @loc.bb
-                   @loc.attrInfo
-          ]
+      lhs.bbForest = [BBLeaf @lhs.pos @loc.bb @loc.attrInfo]
+
+sem Locals
+  | Nil lhs.bbForest = []
+  | Cons
+      loc.targetInfo = @lhs.targetInfoMap Map.!? Address "loc" @hd
+      loc.attrInfo
+        = case @loc.targetInfo of
+            Just (code, origin) -> TargetInfo (Haskell "") code origin
+            _ -> SourceInfo (Haskell "")
+      +bbForest = (BBLeaf @lhs.pos (@loc.bb_w, @loc.bb_h) @loc.attrInfo :)
 
 -- Only compute bbForest for chosen nonterminal and production 
 
@@ -625,6 +674,10 @@ sem Nonterminal
 sem Production
   | Production lhs.bbForest
       = if @name == @lhs.chosenProd
-          then @children.bbForest ++ @parent.bbForest
+          then concat [ @children.bbForest
+                      , @parent.bbForest
+                      , @leftLocalsRows.bbForest
+                      , @rightLocalsRows.bbForest
+                      ]
           else []
 

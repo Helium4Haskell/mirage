@@ -9,6 +9,3 @@ options: haskellsyntax, module "Mirage.RenderShapes", pretty, checkParseHaskell,
 
 file: "src/Mirage/StaticInfo.ag"
 options: haskellsyntax, module "Mirage.StaticInfo", pretty, checkParseHaskell, self, wrappers, signatures, catas, semfuns, genlinepragmas, kennedywarren, genmirage
-
-file: "src/Mirage/MirageTest.ag"
-options: genmirage

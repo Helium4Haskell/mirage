@@ -114,7 +114,7 @@ buttonPressEvent (Reader {..}) eventButton = do
 
 populateCode :: Gtk.Window -> Gtk.TextBuffer -> AttrInfo -> IO ()
 populateCode window buffer (TargetInfo tp code origin) = do
-  set buffer [#text := code]
+  set buffer [#text := Text.strip code]
   #showAll window
 populateCode _ _ (SourceInfo _) = return ()
 
@@ -585,7 +585,13 @@ setupCodeWindow :: IO (Gtk.Window, Gtk.TextBuffer)
 setupCodeWindow = do
   window   <- new Gtk.Window [#typeHint := Gdk.WindowTypeHintDialog]
 
-  textView <- new Gtk.TextView []
+  textView <- new
+    Gtk.TextView
+    [ #editable := False
+    , #wrapMode := Gtk.WrapModeWordChar
+    , #cursorVisible := False
+    , #monospace := True
+    ]
 
   #add window textView
 
