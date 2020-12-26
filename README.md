@@ -9,6 +9,11 @@ To install simply clone this repository and run:
 $ cabal install
 ```
 
+This might require you to install the development package of gtk3 first, you can
+find more information about that on [the GTK website](https://www.gtk.org/docs/installations/).
+It has instructions for GNU/Linux and Unix, Windows and Mac OS X. **Note that
+this package requires gtk3, the latest stable version of gtk is gtk4, so beware.**
+
 This cabal package currently needs to be built with [this custom mirage branch of UUAGC](https://github.com/noughtmare/uuagc/tree/mirage).
 But retrieving that should be handled automatically by cabal.
 
@@ -35,6 +40,12 @@ You can also add the `genmirage` option in the `uuagc_options` file, e.g.
 file: "src/Test.ag"
 options: genmirage
 ```
+
+Either of these options will cause a `Test.hs.mirage` file to be generated (you
+may have to look in dist/ or dist-newstyle/). These files can be opened with
+mirage by starting mirage and then selecting 'File -> Open' in the top left of
+the window. After selecting your .mirage file you should be able to select
+nonterminals and production rules in the sidebar.
 
 For more information I invite you to look at the internship report in `report/report.pdf`.
 It should give an overview of the functionality and notes about the implementation.
