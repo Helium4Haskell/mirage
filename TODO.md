@@ -1,19 +1,6 @@
-Questions:
-
-  * How to deal with constant attributes
-  * Should the visual filter also merge local attributes and child/lhs attributes with the same name?
-
-  * To differentiate the connections a bit more I could introduce a kind of
-    randomized "wind" effect where each line moves a little bit. That should make
-    it easier to see which parts are connected.
-
-    Current door de graaf
-
-    Beweeg alle nodes los van elkaar of alleen de control points
-
 Bugs:
 
-  * Fix local attribute arrangement "ioMatch"
+  * Fix local attribute types (they are missing now)
 
 Short term:
 
@@ -38,17 +25,19 @@ Short term:
     * [x] For orange attributes, show only the type
     * [x] Open window for source code (when clicked) and refresh contents
   * [x] Flip left local attributes
-  * [ ] Filter window extras:
-    * [ ] "Selected production only"
-    * [ ] Transitive dependencies depth slider
-  * [ ] Drag background to pan
-  * [ ] Improve bezier curves
+  * [x] Horizontal scrolling when productions are too large
   * [ ] Add arrow heads to indicate direction (make blue disks into triangles)
+  * [ ] Filter window extras:
+    * [ ] Transitive dependencies depth slider
+    * [ ] "Selected production only"
   * [ ] Better vertical alignment of trapezoids (currently, they are centered)
+  * [ ] Improve bezier curves
+  * [ ] Hide all local attributes toggle
+
+Future work:
+
   * [ ] Show node self disks (maybe also for locals) if they're used
-
-Long term:
-
+  * [ ] Pretty print with wrapping and indentation in code window
   * [ ] Expand/collapse all for the side bar
   * [ ] Search in side bar (is already present, but not satisfactory)
   * [ ] Search bar at top of filter window

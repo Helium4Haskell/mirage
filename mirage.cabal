@@ -1,9 +1,12 @@
 cabal-version:      2.0
 name:               mirage
 version:            0.1.0.0
+license:            BSD3
 license-file:       LICENSE
-maintainer:         jaro.reinders@gmail.com
+copyright:          2020 Jaro Reinders
 author:             Jaro Reinders
+maintainer:         jaro.reinders@gmail.com
+synopsis:           Visualizing Attribute Grammars
 build-type:         Custom
 extra-source-files:
   CHANGELOG.md
@@ -29,6 +32,11 @@ library
     Mirage.DependencyGraph
     Mirage.RenderShapes
     Mirage.Shape
+    Mirage.StaticInfo
+  autogen-modules:
+    Mirage.AbstractSyntax
+    Mirage.DependencyGraph
+    Mirage.RenderShapes
     Mirage.StaticInfo
 
   hs-source-dirs:   src

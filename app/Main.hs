@@ -5,8 +5,7 @@
 {-# LANGUAGE BlockArguments #-}
 module Main
   ( main
-  )
-where
+  ) where
 
 import           Data.GI.Base
 import           Data.GI.Base.GType             ( gtypeString )
@@ -47,7 +46,7 @@ data State = State
   { stateGrammar      :: !(Maybe Grammar)
   , stateSelected     :: !(Maybe (Text, Text))
   , stateHideImplicit :: !Bool
-  , stateBBForest     :: !(Maybe (BBForest AttrInfo))
+  , stateBBTree       :: !(Maybe (BBTree AttrInfo))
   }
 
 data Reader = Reader
@@ -61,54 +60,15 @@ data Reader = Reader
   , readerState         :: !(IORef State)
   }
 
--- * Mouse and button press signals to respond to input from the user. (Use
---   widgetAddEvents to enable events you wish to receive.)
--- * The realize signal to take any necessary actions when the widget is
---   instantiated on a particular display. (Create GDK resources in response
---   to this signal.)
--- * The sizeAllocate signal to take any necessary actions when the widget
---   changes size.
--- * The draw signal to handle redrawing the contents of the widget.
-
 buttonPressEvent :: Reader -> Gdk.EventButton -> IO Bool
 buttonPressEvent (Reader {..}) eventButton = do
-
-  -- putStrLn "BUTTON PRESS EVENT"
-
-  -- axes      <- get eventButton #axes
-  -- button    <- get eventButton #button
-  -- -- device    <- get eventButton #device
-  -- sendEvent <- get eventButton #sendEvent
-  -- state     <- get eventButton #state
-  -- time      <- get eventButton #time
-  -- type'     <- get eventButton #type
-  -- -- window    <- get eventButton #window
   x <- get eventButton #x
-  -- xRoot     <- get eventButton #xRoot
   y <- get eventButton #y
-  -- yRoot     <- get eventButton #yRoot
 
-  -- print ("axes", axes)
-  -- print ("button", button)
-  -- -- print ("device", device)
-  -- print ("sendEvent", sendEvent)
-  -- print ("state", state)
-  -- print ("time", time)
-  -- print ("type", type')
-  -- -- print ("window", window)
-  -- print ("x", x)
-  -- print ("xRoot", xRoot)
-  -- print ("y", y)
-  -- print ("yRoot", yRoot)
-
-  -- putStrLn ""
-
-  traverse_
-      ( traverse_ (populateCode readerCodeWindow readerCodeBuffer)
-      . lookupBBForest (x, y)
-      )
-    .   stateBBForest
-    =<< readIORef readerState
+  s <- readIORef readerState
+  for_ (stateBBTree s) $ \bbForest -> case lookupBBTree (x, y) bbForest of
+    Just x  -> populateCode readerCodeWindow readerCodeBuffer x
+    Nothing -> pure ()
 
   return True
 
@@ -119,68 +79,12 @@ populateCode window buffer (TargetInfo tp code origin) = do
 populateCode _ _ (SourceInfo _) = return ()
 
 buttonReleaseEvent :: Reader -> Gdk.EventButton -> IO Bool
-buttonReleaseEvent _reader _eventButton = do
-
-  -- putStrLn "BUTTON RELEASE EVENT"
-
-  -- axes      <- get eventButton #axes
-  -- button    <- get eventButton #button
-  -- -- device    <- get eventButton #device
-  -- sendEvent <- get eventButton #sendEvent
-  -- state     <- get eventButton #state
-  -- time      <- get eventButton #time
-  -- type'     <- get eventButton #type
-  -- -- window    <- get eventButton #window
-  -- x         <- get eventButton #x
-  -- xRoot     <- get eventButton #xRoot
-  -- y         <- get eventButton #y
-  -- yRoot     <- get eventButton #yRoot
-
-  -- print ("axes", axes)
-  -- print ("button", button)
-  -- -- print ("device", device)
-  -- print ("sendEvent", sendEvent)
-  -- print ("state", state)
-  -- print ("time", time)
-  -- print ("type", type')
-  -- -- print ("window", window)
-  -- print ("x", x)
-  -- print ("xRoot", xRoot)
-  -- print ("y", y)
-  -- print ("yRoot", yRoot)
-
-  -- putStrLn ""
-
-  return True
+buttonReleaseEvent (Reader {..}) _eventButton = pure True
 
 motionNotifyEvent :: Reader -> Gdk.EventMotion -> IO Bool
 motionNotifyEvent _reader _eventMotion = do
-
-  -- putStrLn "BUTTON RELEASE EVENT"
-
-  -- axes      <- get eventMotion #axes
-  -- isHint    <- get eventMotion #isHint
-  -- sendEvent <- get eventMotion #sendEvent
-  -- state     <- get eventMotion #state
-  -- time      <- get eventMotion #time
-  -- type'     <- get eventMotion #type
   -- x         <- get eventMotion #x
-  -- xRoot     <- get eventMotion #xRoot
   -- y         <- get eventMotion #y
-  -- yRoot     <- get eventMotion #yRoot
-
-  -- print ("axes", axes)
-  -- print ("isHint", isHint)
-  -- print ("sendEvent", sendEvent)
-  -- print ("state", state)
-  -- print ("time", time)
-  -- print ("type", type')
-  -- print ("x", x)
-  -- print ("xRoot", xRoot)
-  -- print ("y", y)
-  -- print ("yRoot", yRoot)
-
-  -- putStrLn ""
 
   return True
 
@@ -225,8 +129,10 @@ draw (Reader {..}) ctx = do
       ctx
       (renderGrammar (width, height) grammar nont prod stateHideImplicit enabled
       )
+    let (w, h) = bbSize bbForest
+    #setSizeRequest readerArea (ceiling w) (ceiling h)
     atomicModifyIORef' readerState
-      $ \s -> (s { stateBBForest = Just bbForest }, ())
+      $ \s -> (s { stateBBTree = Just bbForest }, ())
 
   return True
 
@@ -531,11 +437,13 @@ setupFilterWindow stateRef redraw = do
 
   -- interaction
 
+
   _ <- on enabledList #rowActivated $ \path _ -> do
     (True, iter) <- #getIter enabledStore path
     withTrans    <- #getState transitiveSwitch
     if withTrans
       then do
+        -- TODO: Compute the dependency graph once when a new grammar is loaded
         mayGram <- stateGrammar <$> readIORef stateRef
         for_ mayGram $ \gram -> toggleAttributeTrans (dependencyGraph gram)
                                                      enabledStore
@@ -568,10 +476,10 @@ setupFilterWindow stateRef redraw = do
 
 queryTooltip :: IORef State -> Double -> Double -> Gtk.Tooltip -> IO Bool
 queryTooltip stateRef x y ttip = do
-  mayBBForest <- stateBBForest <$> readIORef stateRef
+  mayBBTree <- stateBBTree <$> readIORef stateRef
   fromMaybe (return False) $ do
-    bbForest <- mayBBForest
-    attrInfo <- lookupBBForest (x, y) bbForest
+    bbTree   <- mayBBTree
+    attrInfo <- lookupBBTree (x, y) bbTree
     return $ do
       -- Text.putStrLn origin
       #setText ttip $ Just $ Text.strip $ Text.unlines $ case attrInfo of
@@ -603,16 +511,19 @@ setupCodeWindow = do
 
 activateApp :: Gtk.Application -> IO ()
 activateApp app = do
-  window   <- Gtk.applicationWindowNew app
+  window     <- Gtk.applicationWindowNew app
 
-  hBox     <- new Gtk.Box [#orientation := Gtk.OrientationHorizontal]
-  area     <- new Gtk.DrawingArea [#hasTooltip := True]
-  scroll   <- new Gtk.ScrolledWindow [#hscrollbarPolicy := Gtk.PolicyTypeNever]
+  hBox       <- new Gtk.Box [#orientation := Gtk.OrientationHorizontal]
+
+  scroll <- new Gtk.ScrolledWindow [#vscrollbarPolicy := Gtk.PolicyTypeNever]
+  area       <- new Gtk.DrawingArea [#hasTooltip := True, #halign := Gtk.AlignCenter]
+  sideScroll <- new Gtk.ScrolledWindow
+                    [#hscrollbarPolicy := Gtk.PolicyTypeNever]
 
   stateRef <- newIORef State { stateGrammar      = Nothing
                              , stateSelected     = Nothing
                              , stateHideImplicit = False
-                             , stateBBForest     = Nothing
+                             , stateBBTree       = Nothing
                              }
 
   (filterWindow, disabledStore, enabledStore) <- setupFilterWindow
@@ -635,10 +546,12 @@ activateApp app = do
 
   setupMenubar reader app (#queueDraw area)
 
-  #add scroll tree
-  #packStart hBox scroll False False 0
+  #add sideScroll tree
+  #packStart hBox sideScroll False False 0
 
-  #packStart hBox area True True 0
+  #add scroll area
+  #packStart hBox scroll True True 0
+  -- #add vp area
 
   #add window hBox
 

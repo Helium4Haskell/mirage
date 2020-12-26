@@ -14,8 +14,8 @@ module {Mirage.RenderShapes}
 , targetInfoCode
 , targetInfoOrigin
 , sourceInfoType
-, BBForest
-, lookupBBForest
+, BBTree
+, lookupBBTree
 }{}
 
 imports
@@ -28,6 +28,9 @@ import qualified Data.Set                      as Set
 import           Graphics.Rendering.Cairo.Internal
                                                 ( Render(..)
                                                 , Cairo
+                                                )
+import           Data.Maybe                     ( fromJust
+                                                , isJust
                                                 )
 
 import           Mirage.Shape
@@ -42,13 +45,8 @@ import           Control.Arrow                  ( first
                                                 )
 import           Data.Monoid                    ( Sum )
 import           Control.Applicative            ( Alternative((<|>), empty) )
+import Debug.Trace
 }
-
-attr Production Productions
-  inh parentAttrs :: {(Attributes, Attributes)}
-
-sem Nonterminal
-  | Nonterminal prods.parentAttrs = (@inhs, @syns)
 
 {
 data Deps = Deps
@@ -91,7 +89,7 @@ sem Production
             ((if @lhs.hideImplicit
                 then Set.intersection @rules.activeAttributes
                 else id) @lhs.enabledAttrs)
-            @lhs.parentAttrs
+            (fromJust (Map.lookup @lhs.requestedNont @lhs.nontMapInh))
 
       (loc.leftLocalDeps, loc.rightLocalDeps)
         = Map.partition splitDepsHorizontally @rules.localDeps
@@ -127,13 +125,15 @@ sem Nonterminal
   | Nonterminal lhs.nontMapSyn = Map.singleton @name (@inhs, @syns)
 
 sem Grammar
-  | Grammar nonts.nontMapInh = @nonts.nontMapSyn
+  | Grammar activeProd.nontMapInh = @nonts.nontMapSyn
 
-attr Child Children Production Productions Nonterminal Nonterminals
+attr Child Children Production
   inh nontMapInh :: {Map Text (Attributes, Attributes)}
 
 ---
 
+-- Active attributes are attributes that are used explicitly at least once in
+-- a semantic rule.
 attr Rules Rule
   syn activeAttributes use {<>} {mempty} :: {Set Text}
 
@@ -158,15 +158,16 @@ both f ~(x, y) = (f x, f y)
 }
 
 sem Child
-  | Child inst.node :: Node
-          inst.node
-            = uncurry (Node @name) $ filterAttrs
-                ((if @lhs.hideImplicit
-                    then Set.intersection @lhs.activeAttributes
-                    else id) @lhs.enabledAttrs)
-                (case @tp of
-                   NT tp _ -> @lhs.nontMapInh Map.! tp
-                   _ -> ([], []))
+  | Child
+      inst.node :: Node
+      inst.node
+        = uncurry (Node @name) $ filterAttrs
+            ((if @lhs.hideImplicit
+                then Set.intersection @lhs.activeAttributes
+                else id) @lhs.enabledAttrs)
+            (case @tp of
+               NT tp _ -> @lhs.nontMapInh Map.! tp
+               _ -> ([], []))
 
 attr Rules Rule
   syn gathLocals      use {<>} {mempty} :: {Set Text}
@@ -203,7 +204,9 @@ data HorizontalSide = SideLeft | SideRight deriving Eq
 data VerticalSide = SideTop | SideBottom deriving Eq
 
 data NodeRole = NodeRoleParent | NodeRoleChild deriving Eq
+}
 
+{
 askCairo :: Render Cairo
 askCairo = Render ask
 
@@ -224,24 +227,24 @@ textExtents cairo font txt = unsafePerformIO $
   runReaderT (runRender (mirageTextExtents font txt)) cairo
 }
 
-attr Child Children Locals Attribute Attributes Production Productions Node
-     LocalsRows Nonterminal Nonterminals Grammar
-  inh nodeFont :: FontOptions
+attr Grammar Nonterminals Nonterminal Productions Production Children Child
+     LocalsRows Locals Attributes Attribute Node
+  inh nodeFont        :: FontOptions
   inh nodeFontExtents :: FontExtents
+  inh nodeTextExtents :: {Text -> TextExtents}
 
-  inh attrFont :: FontOptions
+  inh attrFont        :: FontOptions
   inh attrFontExtents :: FontExtents
-  
-  inh cairo :: {Cairo}
+  inh attrTextExtents :: {Text -> TextExtents}
 
 attr Grammar Nonterminals Nonterminal Productions Production Connections
      Connection LocalsRows
-  inh allocation :: {(Double, Double)}
+  inh viewport :: {(Double, Double)}
 
-attr Child Children LocalsRows Locals Attribute Attributes Node
+attr Children Child LocalsRows Locals Attributes Attribute Node
   -- bounding box size
   syn bb :: {(Double, Double)}
-  
+
   -- position (bottom left corner of bounding box)
   inh pos :: {(Double, Double)}
 
@@ -249,15 +252,35 @@ attr Child Children LocalsRows Locals Attribute Attributes Node
   syn sources use {<>} {mempty} :: {Map Address (VerticalSide, (Double, Double))}
   syn targets use {<>} {mempty} :: {Map Address (VerticalSide, (Double, Double))}
 
-attr Grammar Nonterminals Nonterminal Productions Production Child Children
-     LocalsRows Locals Connections Connection Attribute Attributes Node
+attr Grammar Production Child Children LocalsRows Locals Connections Connection
+     Attribute Attributes Node
   syn shapes use {<>} {mempty} :: {[Shape]}
 
-attr Grammar Nonterminals Nonterminal 
-  inh chosenNont :: Text
+attr Grammar Nonterminals Nonterminal Production
+  inh requestedNont :: Text
 
 attr Grammar Nonterminals Nonterminal Productions Production
-  inh chosenProd :: Text
+  inh requestedProd :: Text
+
+attr Nonterminals Nonterminal Productions Production
+  syn responseProd use {<|>} {empty} :: {Maybe Production}
+
+attr Production Children Child LocalsRows Locals Connections Connection 
+     Attribute Attributes Node Rules Rule
+  syn copy :: self
+
+sem Nonterminal
+  | Nonterminal +responseProd = {(\x -> if @lhs.requestedNont == @name then x else Nothing)}
+
+sem Production
+  | Production lhs.responseProd = if @lhs.requestedProd == @name then Just @loc.copy else Nothing
+
+sem Grammar
+  | Grammar
+      inst.activeProd :: Production
+      inst.activeProd = fromJust @nonts.responseProd
+
+      lhs.shapes = if isJust @nonts.responseProd then @activeProd.shapes else []
 
 attr Grammar Nonterminals Nonterminal Productions Production Children Child
   inh hideImplicit :: Bool
@@ -269,12 +292,6 @@ attr Attribute Attributes
 
 attr Attribute Attributes Node Child Children
   inh role :: {NodeRole}
-
-sem Nonterminal
-  | Nonterminal lhs.shapes = if @name == @lhs.chosenNont then @prods.shapes else []
-
-sem Production
-  | Production lhs.shapes = if @name == @lhs.chosenProd then @loc.shapes else []
 
 attr Connections Connection
   inh sources :: {Map Address (VerticalSide, (Double, Double))}
@@ -306,7 +323,7 @@ sem Attribute
   | Attribute
       loc.bb = (@loc.w + 1.5 * @loc.h, @loc.h)
       loc.h = fontExtentsHeight @lhs.attrFontExtents
-      (TextExtents loc.w) = textExtents @lhs.cairo @lhs.attrFont @name
+      (TextExtents loc.w) = @lhs.attrTextExtents @name
       loc.isTarget = (@lhs.location == SideRight)
                        == (@lhs.role == NodeRoleParent)
       loc.addPort = Map.insert (Address @lhs.fieldName @name) (if @lhs.role == NodeRoleParent then SideBottom else SideTop, (@loc.x, @loc.y))
@@ -339,7 +356,7 @@ sem Node
   | Node 
       loc.ahgt = fontExtentsHeight @lhs.attrFontExtents
       loc.nhgt = fontExtentsHeight @lhs.nodeFontExtents
-      (TextExtents loc.w) = textExtents @lhs.cairo @lhs.nodeFont @name
+      (TextExtents loc.w) = @lhs.nodeTextExtents @name
       loc.bb = (@loc.bb_w, @loc.bb_h)
       (loc.bb_w, loc.bb_h)
         = let (xi, yi) = @inhs.bb
@@ -347,7 +364,7 @@ sem Node
           in ( max @loc.w (abs (yi - ys) + max @loc.ahgt (xi + xs) + @loc.ahgt)
              , @loc.nhgt + max yi ys + if @loc.hasSource then @loc.ahgt else 0
              )
-      loc.hasSource = False -- @lhs.role == NodeRoleChild
+      loc.hasSource = @lhs.role == NodeRoleChild
       inhs.pos
         = let (x, y) = @lhs.pos
           in ( x + max 0 (snd @syns.bb - snd @inhs.bb)
@@ -422,30 +439,31 @@ attr LocalsRows Locals
   inh side :: HorizontalSide
 
 sem LocalsRows
-  | Nil lhs.bb = (0, 0)
+  | Nil loc.bb = (0, 0)
   | Cons
-      lhs.bb
+      loc.bb
         = let ~(w1, h1) = @tl.bb
               ~(w2, h2) = @hd.bb
-              ~(_ , h3) = @lhs.allocation
+              ~(_ , h3) = @lhs.viewport
           in  (max w1 w2, h2 + if h1 > 0 then h1 + 0.1 * h3 else 0)
       hd.pos
         = let ~(x, y) = @lhs.pos
-          in ( x
-             , y - (snd @tl.bb + if snd @tl.bb > 0 then 0.1 * snd @lhs.allocation else 0)
+          in ( if @lhs.side == SideRight then x else x + fst @loc.bb - fst @hd.bb
+             , y - (snd @tl.bb + if snd @tl.bb > 0 then 0.1 * snd @lhs.viewport else 0)
              )
       tl.pos
         = let ~(x, y) = @lhs.pos
-          in if @lhs.side == SideRight
-               then (x, y)
-               else (x - fst @tl.bb, y)
+          in ( if @lhs.side == SideRight
+                then x
+                else x + fst @loc.bb - fst @tl.bb
+             , y)
 
 sem Locals
   | Nil lhs.bb = (0, 0)
   | Cons
       loc.nhgt = fontExtentsHeight @lhs.nodeFontExtents
       loc.ahgt = fontExtentsHeight @lhs.attrFontExtents
-      (TextExtents loc.w) = textExtents @lhs.cairo @lhs.nodeFont @hd
+      (TextExtents loc.w) = @lhs.nodeTextExtents @hd
       loc.bb = ( @loc.bb_w + if fst @tl.bb > 0 then fst @tl.bb + 20 else 0
                , max @loc.bb_h (snd @tl.bb)
                )
@@ -494,26 +512,53 @@ sem Locals
                      @hd
               ] <>)
 
+-- Here we define the most important part of the layout.
+-- The parent node is located at the top centered horizontally.
+-- Then the right side of the left locals rows is aligned with the left side of
+--   the parent node.
+-- Symmetrically, the left side of the right locals rows is aligned with the
+--   right side of the parent node. These locals rows are vertically centered.
+-- At the bottom, the child nodes are horizontally centered.
+--
+-- Practically, we take the left side of the entire picture to be position 0
+-- horizontally, so then the horizontal center is the width of the left locals
+-- rows plus half the width of the parent node, or half the width of the
+-- children whichever is greater.
+--
+-- Vertically, the bottom of the picture is at position 0. The height is
+-- determined by the inherited 'viewport' attribute.
+
 sem Production
   | Production
-      (loc.w, loc.h) = @lhs.allocation
+      loc.left = max (fst @leftLocalsRows.bb + fst @parent.bb / 2)
+                     (fst @children.bb / 2)
+      loc.right = max (fst @parent.bb / 2 + fst @rightLocalsRows.bb)
+                      (fst @children.bb / 2)
+      loc.w = @loc.left + @loc.right
+      loc.h = snd @lhs.viewport
+      loc.bb = (@loc.w, @loc.h)
+      loc.pos = (0, @loc.h)
+      loc.mid = @loc.left
       parent.pos
         = let ~(pw, ph) = @parent.bb
-          in  (@loc.w / 2 - pw / 2, 0.2 * @loc.h + ph / 2)
+          in  (@loc.mid - pw / 2, 0.2 * @loc.h + ph / 2)
       parent.role = NodeRoleParent
-      children.pos
+      children.pos = @loc.childrenPos
+      loc.childrenPos
         = let ~(cw, ch) = @children.bb
-          in  (@loc.w / 2 - cw / 2, 0.8 * @loc.h + ch / 2)
+          in  (@loc.mid - cw / 2, 0.8 * @loc.h + ch / 2)
       children.role = NodeRoleChild
-      leftLocalsRows.pos
+      leftLocalsRows.pos = @loc.leftLocalsRowsPos
+      loc.leftLocalsRowsPos
         = let ~(lw, lh) = @leftLocalsRows.bb
               ~(pw, _ph) = @parent.bb
-          in  (@loc.w / 2 - pw / 2 - lw, @loc.h / 2 + lh / 2)
-      rightLocalsRows.pos
+          in  (@loc.mid - pw / 2 - lw, @loc.h / 2 + lh / 2)
+      rightLocalsRows.pos = @loc.rightLocalsRowsPos
+      loc.rightLocalsRowsPos
         = let ~(lw, lh) = @rightLocalsRows.bb
               ~(pw, _ph) = @parent.bb
-          in  (@loc.w / 2 + pw / 2, @loc.h / 2 + lh / 2)
-      -- connections.bb = @lhs.allocation
+          in  (@loc.mid + pw / 2, @loc.h / 2 + lh / 2)
+      -- connections.bb = @lhs.viewport
       connections.sources = mconcat [ @leftLocalsRows.sources
                                     , @rightLocalsRows.sources
                                     , @children.sources
@@ -543,13 +588,13 @@ sem Connection
                        (x, y)
                        ( x
                        , if s == SideBottom
-                         then y + 0.2 * snd @lhs.allocation
-                         else y - 0.2 * snd @lhs.allocation
+                         then y + 0.2 * snd @lhs.viewport
+                         else y - 0.2 * snd @lhs.viewport
                        )
                        ( x'
                        , if s' == SideBottom
-                         then y' + 0.2 * snd @lhs.allocation
-                         else y' - 0.2 * snd @lhs.allocation
+                         then y' + 0.2 * snd @lhs.viewport
+                         else y' - 0.2 * snd @lhs.viewport
                        )
                        (x', y')
                      ] <>)
@@ -567,20 +612,21 @@ grammarShapes
   -> Bool     -- ^ hide implicit attributes
   -> Set Text -- ^ enabled attributes
   -> Grammar
-  -> ([Shape], BBForest AttrInfo)
-grammarShapes cairo nodeFont nodeFontExtents attrFont attrFontExtents bb nont prod hideImplicit enabled gram
-  = (shapes_Syn_Grammar wrapped, bbForest_Syn_Grammar wrapped)
+  -> ([Shape], BBTree AttrInfo)
+grammarShapes cairo nodeFont nodeFontExtents attrFont attrFontExtents viewport nont prod hideImplicit enabled gram
+  = (shapes_Syn_Grammar wrapped, bbTree_Syn_Grammar wrapped)
  where
   wrapped = wrap_Grammar
     (sem_Grammar gram)
-    Inh_Grammar { cairo_Inh_Grammar           = cairo
-                , nodeFont_Inh_Grammar        = nodeFont
+    Inh_Grammar { nodeFont_Inh_Grammar        = nodeFont
                 , nodeFontExtents_Inh_Grammar = nodeFontExtents
+                , nodeTextExtents_Inh_Grammar = textExtents cairo nodeFont
                 , attrFont_Inh_Grammar        = attrFont
                 , attrFontExtents_Inh_Grammar = attrFontExtents
-                , allocation_Inh_Grammar      = bb
-                , chosenNont_Inh_Grammar      = nont
-                , chosenProd_Inh_Grammar      = prod
+                , attrTextExtents_Inh_Grammar = textExtents cairo attrFont
+                , viewport_Inh_Grammar        = viewport
+                , requestedNont_Inh_Grammar   = nont
+                , requestedProd_Inh_Grammar   = prod
                 , hideImplicit_Inh_Grammar    = hideImplicit
                 , enabledAttrs_Inh_Grammar    = enabled
                 }
@@ -604,6 +650,10 @@ sem BBTree
 isInside :: (Double, Double) -> (Double, Double) -> (Double, Double) -> Bool
 isInside (x1, y1) (x2, y2) (dx, dy) =
   (x2 <= x1 && x1 <= x2 + dx) && (y2 >= y1 && y1 >= y2 - dy)
+
+lookupBBTree :: (Double, Double) -> BBTree a -> Maybe a
+lookupBBTree point tree = queryRes_Syn_BBTree
+  (wrap_BBTree (sem_BBTree tree) Inh_BBTree { queryPos_Inh_BBTree = point })
 
 lookupBBForest :: (Double, Double) -> BBForest a -> Maybe a
 lookupBBForest point forest = queryRes_Syn_BBForest
@@ -639,12 +689,17 @@ sem Rule
 attr LocalsRows Locals Children Child Node Attributes Attribute
   inh targetInfoMap :: {Map Address (Text, Text)}
 
-attr Grammar Nonterminals Nonterminal Productions Production Child Children
-     LocalsRows Locals Connections Connection Attribute Attributes Node
+attr Grammar Production Child Attribute Node
+  syn bbTree :: {BBTree AttrInfo}
+
+attr Children LocalsRows Locals Attributes
   syn bbForest use {++} {[]} :: {BBForest AttrInfo}
 
 sem Node
-  | Node +bbForest = (: []) . BBNode @lhs.pos @loc.bb 
+  | Node lhs.bbTree = BBNode @lhs.pos @loc.bb (@inhs.bbForest ++ @syns.bbForest)
+
+sem Attributes
+  | Cons lhs.bbForest = @hd.bbTree : @tl.bbForest
 
 sem Attribute
   | Attribute
@@ -653,7 +708,10 @@ sem Attribute
         = case @loc.targetInfo of
             Just (code, origin) | @loc.isTarget -> TargetInfo @tp code origin
             _ -> SourceInfo @tp
-      lhs.bbForest = [BBLeaf @lhs.pos @loc.bb @loc.attrInfo]
+      lhs.bbTree = BBLeaf @lhs.pos @loc.bb @loc.attrInfo
+
+sem LocalsRows
+  | Cons lhs.bbForest = BBNode @lhs.pos @loc.bb @hd.bbForest : @tl.bbForest
 
 sem Locals
   | Nil lhs.bbForest = []
@@ -665,19 +723,12 @@ sem Locals
             _ -> SourceInfo (Haskell "")
       +bbForest = (BBLeaf @lhs.pos (@loc.bb_w, @loc.bb_h) @loc.attrInfo :)
 
--- Only compute bbForest for chosen nonterminal and production 
-
-sem Nonterminal
-  | Nonterminal lhs.bbForest
-      = if @name == @lhs.chosenNont then @prods.bbForest else []
-
 sem Production
-  | Production lhs.bbForest
-      = if @name == @lhs.chosenProd
-          then concat [ @children.bbForest
-                      , @parent.bbForest
-                      , @leftLocalsRows.bbForest
-                      , @rightLocalsRows.bbForest
-                      ]
-          else []
-
+  | Production
+      lhs.bbTree
+        = BBNode @loc.pos @loc.bb
+            [ @parent.bbTree
+            , BBNode @loc.childrenPos @children.bb @children.bbForest
+            , BBNode @loc.leftLocalsRowsPos @leftLocalsRows.bb @leftLocalsRows.bbForest
+            , BBNode @loc.rightLocalsRowsPos @rightLocalsRows.bb @rightLocalsRows.bbForest
+            ]

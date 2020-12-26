@@ -13,12 +13,12 @@ module Mirage
   , targetInfoCode
   , targetInfoOrigin
   , sourceInfoType
-  , BBForest
-  , lookupBBForest
+  , BBTree
+  , lookupBBTree
   , Type
   , prettyType
-  )
-where
+  , bbSize
+  ) where
 
 import           Data.Foldable                  ( traverse_ )
 import           Graphics.Rendering.Cairo       ( Render )
@@ -40,6 +40,10 @@ import           Mirage.CommonTypes             ( Type
                                                 , prettyType
                                                 )
 
+bbSize :: BBTree a -> (Double, Double)
+bbSize (BBNode _ x _) = x
+bbSize (BBLeaf _ x _) = x
+
 renderGrammar
   :: (Double, Double)
   -> Grammar
@@ -47,7 +51,7 @@ renderGrammar
   -> Text
   -> Bool
   -> Set Text
-  -> Render (BBForest AttrInfo)
+  -> Render (BBTree AttrInfo)
 renderGrammar bb gram nont prod hideImplicit enabled = do
   let nodeFont = FontOptions 13 "sans" FontWeightBold
   nodeFontExtents <- mirageFontExtents nodeFont
@@ -56,18 +60,18 @@ renderGrammar bb gram nont prod hideImplicit enabled = do
 
   cairo           <- askCairo
 
-  let ~(shapes, bbForest) = grammarShapes cairo
-                                          nodeFont
-                                          nodeFontExtents
-                                          attrFont
-                                          attrFontExtents
-                                          bb
-                                          nont
-                                          prod
-                                          hideImplicit
-                                          enabled
-                                          gram
+  let ~(shapes, bbTree) = grammarShapes cairo
+                                        nodeFont
+                                        nodeFontExtents
+                                        attrFont
+                                        attrFontExtents
+                                        bb
+                                        nont
+                                        prod
+                                        hideImplicit
+                                        enabled
+                                        gram
 
   traverse_ renderShape shapes
 
-  return bbForest
+  return bbTree
