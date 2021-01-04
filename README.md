@@ -10,9 +10,10 @@ $ cabal install
 ```
 
 This might require you to install the development package of gtk3 first, you can
-find more information about that on [the GTK website](https://www.gtk.org/docs/installations/).
-It has instructions for GNU/Linux and Unix, Windows and Mac OS X. **Note that
-this package requires gtk3, the latest stable version of gtk is gtk4, so beware.**
+find more information about that in [the the installation instructions of haskell-gi](https://github.com/haskell-gi/haskell-gi#installation).
+It has instructions for Fedora, Debian / Ubuntu, Arch Linux, Mac OSX and Windows. 
+
+In addition, the `cairo` library also needs to be installed, which can be done with `apt install libcairo2-dev` on Debian / Ubuntu and `brew install cairo` on Mac. 
 
 This cabal package currently needs to be built with [this custom mirage branch of UUAGC](https://github.com/noughtmare/uuagc/tree/mirage).
 But retrieving that should be handled automatically by cabal.
