@@ -18,10 +18,10 @@ extra-source-files:
 
 custom-setup
   setup-depends:
-      base         >=4.13   && <4.15
+      base         >=4.13   && <4.17
     , Cabal        >=3.0
-    , uuagc        ^>=0.9.53
-    , uuagc-cabal  ^>=1.2
+    , uuagc        >=0.9.54 && < 0.9.55
+    , uuagc-cabal  >=1.2 && < 1.4
 
 library
   exposed-modules:
@@ -44,7 +44,7 @@ library
   ghc-options:      -Wall
   build-depends:
       aeson
-    , base                 >=4.13 && <4.15
+    , base                 >=4.13 && <4.17
     , cairo                ^>=0.13
     , containers           ^>=0.6
     , monoidal-containers  ^>=0.6
@@ -59,15 +59,15 @@ executable mirage
   ghc-options:      -Wall
   build-depends:
       aeson
-    , base             >=4.13 && <4.15
+    , base             >=4.13 && <4.17
     , bytestring
     , cairo            ^>=0.13
     , containers       ^>=0.6
     , gi-cairo         ^>=1.0
     , gi-gdk           ^>=3.0
     , gi-gio           ^>=2.0
-    , gi-gtk           ^>=3.0
-    , haskell-gi-base  ^>=0.24
+    , gi-gtk           >=3.0 && <4.1
+    , haskell-gi-base  >=0.24 && <0.27
     , mirage
     , mtl              ^>=2.2
     , text             ^>=1.2
